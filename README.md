@@ -37,7 +37,9 @@ uv pip sync requirements.txt
 
 4. Set up PostgreSQL with PGvector:
 ```sql
--- Run in PostgreSQL
+-- Run in PostgreSQL (version 15 or higher required)
+CREATE DATABASE pdf_agent;
+\c pdf_agent
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
