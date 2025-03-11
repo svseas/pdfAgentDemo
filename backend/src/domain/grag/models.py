@@ -20,12 +20,19 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class AMRParser:
     """Wrapper for AMR parsing using AMRBART"""
-    def __init__(self, model_name="xfbai/AMRBART-large-finetuned-AMR3.0-seq2seq"):
+    def __init__(self, model_path=None):
+        if model_path is None:
+            model_path = os.path.join(os.getcwd(), "backend/models/amrbart")
+        
         try:
-            logger.info(f"Loading AMR parser model: {model_name}")
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(device)
-            logger.info("AMR parser loaded successfully")
+            logger.info(f"Loading AMR parser from local path: {model_path}")
+            if not os.path.exists(model_path):
+                raise ValueError(f"Model path {model_path} does not exist. Please run download_amr_model.py first.")
+                
+            # Use BART's default tokenizer since this is a BART-based model
+            self.tokenizer = AutoTokenizer.from_pretrained("facebook/bart-large")
+            self.model = AutoModelForSeq2SeqLM.from_pretrained(model_path).to(device)
+            logger.info("AMR parser loaded successfully from local files")
         except Exception as e:
             logger.error(f"Failed to load AMR parser: {e}")
             raise
@@ -146,6 +153,50 @@ class AMRGraphProcessor:
         except Exception as e:
             logger.warning(f"Error converting AMR to NetworkX: {e}")
             return nx.DiGraph()
+            
+    def get_common_elements(self, amr_graph1: str, amr_graph2: str) -> Tuple[List[str], List[Tuple[str, str, str]]]:
+        """Find common concepts and edges between two AMR graphs"""
+        try:
+            # Get concepts and edges for both graphs
+            concepts1 = set(self.extract_node_concepts(amr_graph1))
+            concepts2 = set(self.extract_node_concepts(amr_graph2))
+            edges1 = set(self.extract_edges(amr_graph1))
+            edges2 = set(self.extract_edges(amr_graph2))
+            
+            # Find common elements
+            common_concepts = list(concepts1.intersection(concepts2))
+            common_edges = list(edges1.intersection(edges2))
+            
+            return common_concepts, common_edges
+        except Exception as e:
+            logger.warning(f"Error finding common elements: {e}")
+            return [], []
+            
+    def get_path_information(self, amr_graph: str) -> str:
+        """Extract path information from AMR graph for augmentation"""
+        try:
+            G = self.amr_to_networkx(amr_graph)
+            if not G.nodes():
+                return ""
+                
+            # Get all paths between nodes
+            paths = []
+            nodes = list(G.nodes())
+            for i in range(len(nodes)):
+                for j in range(i + 1, len(nodes)):
+                    try:
+                        path = nx.shortest_path(G, nodes[i], nodes[j])
+                        if len(path) > 1:  # Only include non-trivial paths
+                            path_str = " -> ".join(path)
+                            paths.append(path_str)
+                    except nx.NetworkXNoPath:
+                        continue
+            
+            # Return formatted path information
+            return " | ".join(paths) if paths else ""
+        except Exception as e:
+            logger.warning(f"Error extracting path information: {e}")
+            return ""
 
 class GNNReranker(torch.nn.Module):
     """Graph Neural Network for document reranking"""

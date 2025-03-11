@@ -22,9 +22,11 @@ class GRAGService:
         self.amr_processor = AMRGraphProcessor()
         
         # Initialize GNN reranker
+        # Use same dimension for hidden layer as input to ensure compatibility
+        hidden_dim = self.embedding_model.model_dim
         self.gnn_reranker = GNNReranker(
-            input_dim=self.embedding_model.model_dim,
-            hidden_dim=128,
+            input_dim=hidden_dim,
+            hidden_dim=hidden_dim,
             dropout=0.1
         ).to(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
         
@@ -35,31 +37,49 @@ class GRAGService:
         
         logger.info(f"Building document graph for {len(documents)} documents")
         
+        logger.info("Starting AMR parsing for documents...")
         # Create concat texts and parse to AMR
         concat_texts = [f"{question} {doc['content']}" for doc in documents]
+        logger.info(f"Parsing {len(concat_texts)} texts to AMR graphs...")
         amr_graphs = self.amr_parser.parse_batch(concat_texts)
+        logger.info("AMR parsing completed")
         
         # Build the document graph
+        logger.info("Building document graph structure...")
         doc_graph = nx.Graph()
         
         # Add nodes for each document
         for i in range(len(documents)):
             doc_graph.add_node(i)
+            if i % 2 == 0:  # Log progress every 2 documents
+                logger.info(f"Added {i+1}/{len(documents)} nodes to graph")
         
         # Add edges between documents that share common concepts
         edge_count = 0
+        total_pairs = (len(documents) * (len(documents) - 1)) // 2
+        processed_pairs = 0
+        
+        logger.info("Finding connections between documents...")
         for i in range(len(documents)):
             for j in range(i+1, len(documents)):
-                common_nodes, common_edges = self.amr_processor.get_common_elements(
-                    amr_graphs[i], amr_graphs[j])
-                
-                if common_nodes:
-                    doc_graph.add_edge(
-                        i, j,
-                        common_nodes=len(common_nodes),
-                        common_edges=len(common_edges)
-                    )
-                    edge_count += 1
+                try:
+                    common_nodes, common_edges = self.amr_processor.get_common_elements(
+                        amr_graphs[i], amr_graphs[j])
+                    
+                    if common_nodes:
+                        doc_graph.add_edge(
+                            i, j,
+                            common_nodes=len(common_nodes),
+                            common_edges=len(common_edges)
+                        )
+                        edge_count += 1
+                    
+                    processed_pairs += 1
+                    if processed_pairs % 5 == 0:  # Log progress every 5 pairs
+                        logger.info(f"Processed {processed_pairs}/{total_pairs} document pairs. Found {edge_count} connections.")
+                except Exception as e:
+                    logger.error(f"Error processing pair ({i}, {j}): {e}")
+                    continue
         
         logger.info(f"Document graph built with {len(documents)} nodes and {edge_count} edges")
         return doc_graph, amr_graphs

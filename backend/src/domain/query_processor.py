@@ -3,6 +3,8 @@ import numpy as np
 import httpx
 import logging
 import re
+import os
+from pathlib import Path
 from src.domain.embedding_generator import EmbeddingGenerator
 from src.core.config import settings
 from src.domain.grag import GRAGService
@@ -16,6 +18,32 @@ class QueryProcessor:
         self.llm_url = f"{settings.LMSTUDIO_BASE_URL}/chat/completions"
         self.grag_service = None  # Lazy initialization
         logger.info("QueryProcessor initialized")
+        
+    def _initialize_grag(self):
+        """Initialize GRAG service for reranking"""
+        try:
+            from src.domain.grag.service import GRAGService
+            
+            # Use local model path
+            cwd = os.getcwd()
+            model_path = Path(cwd) / "models" / "amrbart"
+            logger.info(f"Current working directory: {cwd}")
+            logger.info(f"Looking for model at: {model_path}")
+            logger.info(f"Model path exists: {model_path.exists()}")
+            if not model_path.exists():
+                logger.error(f"AMR model not found at {model_path}. Please run python backend/src/scripts/download_amr_model.py first")
+                return None
+                
+            self.grag_service = GRAGService(
+                embedding_model_name="BAAI/bge-small-en",  # Same model as our embedding generator
+                amr_model_name=str(model_path)  # Convert Path to string
+            )
+            logger.info("GRAG service initialized successfully")
+            return self.grag_service
+        except Exception as e:
+            logger.error(f"Failed to initialize GRAG service: {e}")
+            self.grag_service = None
+            return None
         
     def _calculate_similarity(self, query_embedding: np.ndarray, doc_embedding: np.ndarray, chunk_index: int, chunk_content: str) -> float:
         """
