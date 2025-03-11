@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pdfagent"
+version = "0.1.0"
+description = "PDF processing and chat agent"
+requires-python = ">=3.9"
+dependencies = []  # Dependencies are managed by requirements.txt
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
