@@ -2,7 +2,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
-
 import sys
 from pathlib import Path
 
@@ -16,7 +15,18 @@ from src.core.database import engine
 from src.models.base import Base
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.DEBUG,  # Set to DEBUG to capture all levels
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+# Set specific loggers to DEBUG
+logging.getLogger('src.domain.grag').setLevel(logging.DEBUG)
+logging.getLogger('src.domain.query_processor').setLevel(logging.DEBUG)
+
 logger = logging.getLogger(__name__)
 
 

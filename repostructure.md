@@ -11,6 +11,10 @@ backend/
 │   │   ├── database.py             # Database connection and session management
 │   │   └── dependencies.py         # FastAPI dependencies
 │   ├── domain/
+│   │   ├── grag/                   # Graph-based Reranking (GRAG) package
+│   │   │   ├── __init__.py         # Package exports
+│   │   │   ├── models.py           # AMR parsing and graph processing models
+│   │   │   └── service.py          # GRAG service implementation
 │   │   ├── pdf_processor.py        # PDF processing logic
 │   │   ├── embedding_generator.py   # Text embedding generation
 │   │   └── query_processor.py      # Query processing and response generation

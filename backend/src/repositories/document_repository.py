@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from sqlalchemy import select, text, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
@@ -8,6 +8,7 @@ from src.models.document import Document, DocumentMetadata
 from src.schemas.document import DocumentMetadataCreate, DocumentChunkCreate
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Set to DEBUG for more verbose logging
 
 class DocumentRepository:
     """Repository for document-related database operations"""
@@ -128,7 +129,7 @@ class DocumentRepository:
         query_embedding: List[float],
         top_k: int = 5,
         similarity_threshold: float = 0.5
-    ) -> List[Document]:
+    ) -> List[Dict[str, Any]]:
         """
         Get chunks similar to the query embedding using cosine similarity.
         
@@ -141,15 +142,35 @@ class DocumentRepository:
             List of similar document chunks
         """
         # First check if we have any documents with embeddings
+        check_query = text("SELECT COUNT(*) FROM documents")
+        count_result = await self._db.execute(check_query)
+        total_count = count_result.scalar()
+        logger.info(f"Total documents in database: {total_count}")
+
         check_query = text("SELECT COUNT(*) FROM documents WHERE embedding IS NOT NULL")
         count_result = await self._db.execute(check_query)
-        count = count_result.scalar()
-        logger.info(f"Found {count} documents with embeddings")
+        count_with_embeddings = count_result.scalar()
+        logger.info(f"Documents with embeddings: {count_with_embeddings}")
+
+        if count_with_embeddings == 0:
+            logger.warning("No documents found with embeddings")
+            return []
+
+        # Sample a few documents to check their embeddings
+        sample_query = text("""
+            SELECT id, filename, embedding::text
+            FROM documents 
+            WHERE embedding IS NOT NULL 
+            LIMIT 3
+        """)
+        sample_result = await self._db.execute(sample_query)
+        sample_rows = sample_result.fetchall()
+        for row in sample_rows:
+            logger.debug(f"Document {row.id} ({row.filename}) embedding: {row.embedding[:100]}...")
 
         # Convert embedding list to string representation for PostgreSQL
         embedding_str = f"[{','.join(str(x) for x in query_embedding)}]"
-        # Convert embedding list to string representation for PostgreSQL
-        embedding_str = f"[{','.join(str(x) for x in query_embedding)}]"
+        logger.debug(f"Query embedding (first 100 chars): {embedding_str[:100]}...")
         
         # Use raw SQL with direct value interpolation for vector
         # This is safe because we construct embedding_str ourselves
@@ -158,11 +179,16 @@ class DocumentRepository:
                 SELECT '{embedding_str}'::vector AS query_vector
             )
             SELECT
-                d.*,
-                (1 - (d.embedding <=> query_vector)) * 100 as similarity,  -- Scale up similarity
-                d.content as debug_content
+                d.id,
+                d.filename,
+                d.chunk_index,
+                d.content,
+                d.doc_metadata_id,
+                (1 - (d.embedding <=> query_vector)) * 100 as similarity,
+                d.embedding::text as embedding_debug
             FROM documents d, vector_query
             WHERE d.embedding IS NOT NULL
+            AND (1 - (d.embedding <=> query_vector)) * 100 >= :threshold
             ORDER BY similarity DESC
             LIMIT :top_k
         """)
@@ -170,24 +196,35 @@ class DocumentRepository:
         result = await self._db.execute(
             query,
             {
-                "top_k": top_k
+                "top_k": top_k,
+                "threshold": similarity_threshold
             }
         )
         
         rows = result.fetchall()
+        logger.info(f"Query returned {len(rows)} results")
         
-        # Convert rows to dictionaries with similarity scores
+        # Convert rows to dictionaries
         chunks = []
         for row in rows:
+            # Convert embedding string back to list
+            embedding_str = row.embedding_debug.strip('[]').split(',')
+            embedding = [float(x) for x in embedding_str if x.strip()]
+            
             chunk_dict = {
                 "id": row.id,
                 "filename": row.filename,
                 "chunk_index": row.chunk_index,
                 "content": row.content,
                 "doc_metadata_id": row.doc_metadata_id,
-                "similarity": float(row.similarity)  # Convert Decimal to float for JSON serialization
+                "similarity": float(row.similarity),  # Convert Decimal to float for JSON serialization
+                "embedding": embedding  # Include the embedding
             }
             chunks.append(chunk_dict)
+            
+            # Debug logging
+            logger.debug(f"Chunk {chunk_dict['id']} similarity: {chunk_dict['similarity']}")
+            logger.debug(f"Chunk {chunk_dict['id']} embedding (first 100 chars): {row.embedding_debug[:100]}...")
         
         # Debug logging
         for chunk in chunks[:3]:  # Log first 3 results
@@ -196,4 +233,3 @@ class DocumentRepository:
         logger.info(f"Found {len(chunks)} chunks with similarity scores")
         
         return chunks
-        

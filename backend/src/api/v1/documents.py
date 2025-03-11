@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 import numpy as np
+import logging
 
 from src.domain.embedding_generator import EmbeddingGenerator
 from src.domain.query_processor import QueryProcessor
@@ -12,6 +13,8 @@ from src.schemas.rag import (
     ContextRequest,
     QueryRequest
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -76,18 +79,39 @@ async def semantic_search(
     query_service: QueryProcessor = Depends(get_query_processor),
     doc_repository: DocumentRepository = Depends(get_document_repository)
 ) -> dict:
-    """Find relevant document chunks using semantic search"""
-    # Get query embedding
-    query_embedding = query_service.embedding_generator.generate_embedding(request.query)
-    
-    # Get similar chunks from repository
-    similar_chunks = await doc_repository.get_similar_chunks(
-        query_embedding=query_embedding.tolist(),
-        top_k=request.top_k,
-        similarity_threshold=request.similarity_threshold
-    )
-    
-    return {"relevant_chunks": similar_chunks}
+    """Find relevant document chunks using semantic search with GRAG enhancement"""
+    try:
+        logger.info(f"Processing search request for query: {request.query}")
+        
+        # Get query embedding
+        query_embedding = query_service.embedding_generator.generate_embedding(request.query)
+        
+        # Get initial chunks from repository
+        initial_chunks = await doc_repository.get_similar_chunks(
+            query_embedding=query_embedding.tolist(),
+            top_k=request.top_k * 2,  # Get more chunks for GRAG to work with
+            similarity_threshold=request.similarity_threshold
+        )
+        
+        if not initial_chunks:
+            logger.info("No relevant chunks found")
+            return {"relevant_chunks": []}
+            
+        # Use QueryProcessor's get_relevant_chunks for GRAG enhancement
+        logger.info("Applying GRAG reranking to initial chunks")
+        reranked_chunks = query_service.get_relevant_chunks(
+            query=request.query,
+            doc_chunks=initial_chunks,
+            top_k=request.top_k,
+            use_grag=True  # Explicitly enable GRAG
+        )
+        
+        logger.info(f"Reranking complete, returning {len(reranked_chunks)} chunks")
+        return {"relevant_chunks": reranked_chunks}
+        
+    except Exception as e:
+        logger.error(f"Error in semantic search: {str(e)}")
+        raise
 
 @router.post("/build-context", response_model=dict)
 async def build_context(

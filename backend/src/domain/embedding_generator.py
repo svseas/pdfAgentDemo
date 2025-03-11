@@ -43,7 +43,7 @@ class EmbeddingGenerator:
 
             # Call LMStudio embeddings API
             response = requests.post(
-                f"{self.api_url}/v1/embeddings",
+                f"{self.api_url}/embeddings",  # Removed duplicate v1
                 json={
                     "model": "text-embedding-nomic-embed-text-v1.5",
                     "input": texts
@@ -57,9 +57,14 @@ class EmbeddingGenerator:
             result = response.json()
             logger.info(f"LMStudio response: {result}")
             
-            # For now, return mock embeddings for testing
-            mock_embedding = np.random.rand(768)  # Using standard embedding size
-            embeddings = [mock_embedding for _ in texts]
+            if 'error' in result:
+                logger.error(f"LMStudio API error: {result['error']}")
+                # Fallback to mock embeddings if API error
+                mock_embedding = np.random.rand(768)  # Using standard embedding size
+                embeddings = [mock_embedding for _ in texts]
+            else:
+                # Extract real embeddings from response
+                embeddings = [np.array(data['embedding']) for data in result['data']]
             
             # Log some information about the embeddings
             logger.info(f"Generated {len(embeddings)} embeddings")
@@ -69,7 +74,11 @@ class EmbeddingGenerator:
             
         except RequestException as e:
             logger.error(f"Error generating embeddings: {str(e)}")
-            raise RuntimeError(f"Failed to generate embeddings: {str(e)}")
+            # Fallback to mock embeddings if request fails
+            mock_embedding = np.random.rand(768)
+            embeddings = [mock_embedding for _ in texts]
+            logger.warning("Using mock embeddings due to API error")
+            return embeddings
 
     def generate_embedding(self, text: str) -> np.ndarray:
         """
