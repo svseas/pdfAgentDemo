@@ -1,11 +1,14 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 import numpy as np
 import logging
+import shutil
+from pathlib import Path
 
 from src.domain.embedding_generator import EmbeddingGenerator
 from src.domain.query_processor import QueryProcessor
-from src.api.dependencies import get_embedding_generator, get_query_processor, get_document_repository
+from src.api.dependencies import get_embedding_generator, get_query_processor, get_document_repository, get_document_service
 from src.repositories.document_repository import DocumentRepository
+from src.services.document_service import DocumentService
 from src.schemas.rag import (
     VectorizeRequest,
     VectorResponse,
@@ -17,6 +20,46 @@ from src.schemas.rag import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+@router.post("/upload")
+async def upload_document(
+    file: UploadFile = File(...),
+    document_service: DocumentService = Depends(get_document_service)
+) -> dict:
+    """Upload and process a PDF document"""
+    try:
+        # Validate file type
+        if not file.filename.lower().endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+            
+        # Create uploads directory if it doesn't exist
+        upload_dir = Path("uploads")
+        upload_dir.mkdir(exist_ok=True)
+        
+        # Save file
+        file_path = upload_dir / file.filename
+        with file_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        # Create document metadata
+        doc_metadata = await document_service.create_document(
+            file_path=file_path,
+            original_filename=file.filename,
+            file_size=file.size
+        )
+        
+        # Process document (extract text, generate embeddings, store chunks)
+        await document_service.process_document(doc_metadata.id, file_path)
+        
+        return {
+            "message": "Document uploaded and processed successfully",
+            "document_id": doc_metadata.id,
+            "filename": file.filename
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing document: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/query", response_model=dict)
 async def query_documents(
@@ -103,7 +146,7 @@ async def semantic_search(
             query=request.query,
             doc_chunks=initial_chunks,
             top_k=request.top_k,
-            use_grag=True  # Explicitly enable GRAG
+            use_grag=request.use_grag  # Use value from request
         )
         
         logger.info(f"Reranking complete, returning {len(reranked_chunks)} chunks")

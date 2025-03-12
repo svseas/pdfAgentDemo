@@ -8,6 +8,7 @@ from pathlib import Path
 from src.domain.embedding_generator import EmbeddingGenerator
 from src.core.config import settings
 from src.domain.grag import GRAGService
+from src.domain.stepback_agent import StepbackAgent
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Set to DEBUG for more verbose logging
@@ -17,6 +18,7 @@ class QueryProcessor:
         self.embedding_generator = embedding_generator
         self.llm_url = f"{settings.LMSTUDIO_BASE_URL}/chat/completions"
         self.grag_service = None  # Lazy initialization
+        self.stepback_agent = StepbackAgent()
         logger.info("QueryProcessor initialized")
         
     def _initialize_grag(self):
@@ -109,7 +111,7 @@ class QueryProcessor:
         query: str, 
         doc_chunks: List[Dict[str, Any]], 
         top_k: int = None,
-        use_grag: bool = True
+        use_grag: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Retrieve the most relevant document chunks for a given query.
@@ -118,7 +120,7 @@ class QueryProcessor:
             query: The user's question
             doc_chunks: List of document chunks with their embeddings
             top_k: Number of most relevant chunks to return (defaults to settings.TOP_K_MATCHES)
-            use_grag: Whether to use GRAG for reranking (defaults to True)
+            use_grag: Whether to use GRAG for reranking (defaults to False). Set to True to enable graph-based reranking.
         
         Returns:
             List of the most relevant document chunks
@@ -247,9 +249,9 @@ Yêu cầu: {query}
 
 Hãy trả lời dựa trên nội dung văn bản được cung cấp. Nếu nội dung không đủ thông tin để trả lời chính xác, hãy nêu rõ điều này."""
 
-        # Prepare the request payload
+        # Prepare the request payload to match working curl command exactly
         payload = {
-            "model": settings.LMSTUDIO_MODEL,
+            "model": "llama3-docchat-1.0-8b-i1",  # Hardcode model name for testing
             "messages": [
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": user_message}
@@ -258,17 +260,49 @@ Hãy trả lời dựa trên nội dung văn bản được cung cấp. Nếu n�
             "max_tokens": -1,
             "stream": False
         }
+        
+        # Log the constructed payload
+        logger.debug(f"Constructed payload: {payload}")
 
         # Make request to LMStudio
         async with httpx.AsyncClient(timeout=settings.LMSTUDIO_TIMEOUT) as client:
             try:
+                # Log request details for debugging
+                logger.debug(f"Making request to URL: {self.llm_url}")
+                logger.debug(f"Request payload: {payload}")
+                
+                # Make request with exact same structure as working curl command
                 response = await client.post(
                     self.llm_url,
                     json=payload,
-                    headers={"Content-Type": "application/json"}
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json"
+                    }
                 )
+                
+                # Log response details
+                logger.debug(f"Response status: {response.status_code}")
+                logger.debug(f"Response headers: {response.headers}")
+                
                 response.raise_for_status()
-                return response.json()["choices"][0]["message"]["content"]
+                response_data = response.json()
+                logger.debug(f"Response data: {response_data}")
+                
+                if "choices" not in response_data:
+                    logger.error(f"Unexpected response format: {response_data}")
+                    raise Exception(f"Unexpected response format: {response_data}")
+                
+                initial_answer = response_data["choices"][0]["message"]["content"]
+                
+                # Enhance answer using stepback prompting
+                enhanced_answer = await self.stepback_agent.enhance_answer(
+                    context=context,
+                    query=query,
+                    initial_answer=initial_answer
+                )
+                
+                return enhanced_answer
             except httpx.RequestError as e:
                 logger.error(f"Error calling LMStudio API: {str(e)}")
                 raise Exception(f"Error generating response from LLM: {str(e)}")

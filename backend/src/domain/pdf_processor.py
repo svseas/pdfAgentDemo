@@ -3,6 +3,8 @@ from typing import List
 import logging
 from unstructured.partition.pdf import partition_pdf
 from src.core.config import settings
+from src.domain.semantic_text_splitter import TextSplitter
+from src.domain.agentic_chunker import AgenticChunker
 
 logger = logging.getLogger(__name__)
 
@@ -10,9 +12,9 @@ class PDFProcessor:
     """Domain service for PDF processing"""
 
     @staticmethod
-    def _split_text(text: str, chunk_size: int, overlap: int) -> List[str]:
+    def _split_text_semantic(text: str, chunk_size: int, overlap: int) -> List[str]:
         """
-        Split text into chunks with overlap, trying to break at sentence boundaries.
+        Split text into chunks with overlap using semantic text splitting.
         
         Args:
             text: Text to split
@@ -22,45 +24,54 @@ class PDFProcessor:
         Returns:
             List of text chunks
         """
-        if len(text) <= chunk_size:
-            return [text]
-            
-        chunks = []
-        start = 0
+        # Initialize semantic text splitter with appropriate parameters
+        splitter = TextSplitter(
+            max_characters=chunk_size,
+            semantic_units=["paragraph", "sentence"],
+            break_mode="sentence",
+            flex=overlap / chunk_size  # Convert overlap to flex ratio
+        )
         
-        while start < len(text):
-            # Find the end of the chunk
-            end = start + chunk_size
+        return splitter.chunks(text)
+
+    @staticmethod
+    def _split_text_agentic(text: str) -> List[str]:
+        """
+        Split text into chunks using agentic chunking for legal documents.
+        
+        Args:
+            text: Text to split
             
-            # If this isn't the last chunk
-            if end < len(text):
-                # Try to find sentence end (.!?) within last 100 chars of chunk
-                for i in range(end, max(end - 100, start), -1):
-                    if i < len(text) and text[i] in '.!?':
-                        end = i + 1  # Include the punctuation
-                        break
-                else:
-                    # If no sentence end found, try to break at a paragraph
-                    for i in range(end, max(end - 100, start), -1):
-                        if i < len(text) and text[i] == '\n':
-                            end = i + 1
-                            break
-                    else:
-                        # If no paragraph break found, try to break at a space
-                        for i in range(end, max(end - 50, start), -1):
-                            if i < len(text) and text[i].isspace():
-                                end = i
-                                break
+        Returns:
+            List of text chunks
+        """
+        try:
+            chunker = AgenticChunker(
+                llm_endpoint=settings.LMSTUDIO_BASE_URL,
+                model=settings.LMSTUDIO_MODEL,
+                language=settings.AGENTIC_CHUNKING_LANGUAGE
+            )
             
-            # Extract the chunk
-            chunk = text[start:end].strip()
-            if chunk:  # Only add non-empty chunks
-                chunks.append(chunk)
+            logger.info("Using agentic chunking for legal documents")
+            chunks = chunker.process_text(text)
             
-            # Move start position for next chunk, accounting for overlap
-            start = end - overlap
+            if not chunks:
+                logger.warning("Agentic chunking returned no chunks, falling back to semantic chunking")
+                return PDFProcessor._split_text_semantic(
+                    text,
+                    settings.CHUNK_SIZE,
+                    settings.CHUNK_OVERLAP
+                )
+                
+            return chunks
             
-        return chunks
+        except Exception as e:
+            logger.error(f"Agentic chunking failed: {str(e)}, falling back to semantic chunking")
+            return PDFProcessor._split_text_semantic(
+                text,
+                settings.CHUNK_SIZE,
+                settings.CHUNK_OVERLAP
+            )
 
     @staticmethod
     def extract_text_chunks(file_path: Path) -> List[str]:
@@ -92,12 +103,16 @@ class PDFProcessor:
         
         logger.info(f"Extracted {len(full_text)} characters of text")
         
-        # Split into chunks
-        chunks = PDFProcessor._split_text(
-            full_text,
-            settings.CHUNK_SIZE,
-            settings.CHUNK_OVERLAP
-        )
+        # Choose chunking method based on settings
+        if settings.CHUNKING_METHOD == "agentic":
+            chunks = PDFProcessor._split_text_agentic(full_text)
+        else:
+            logger.info("Using semantic text splitting")
+            chunks = PDFProcessor._split_text_semantic(
+                full_text,
+                settings.CHUNK_SIZE,
+                settings.CHUNK_OVERLAP
+            )
         
         logger.info(f"Created {len(chunks)} chunks")
         for i, chunk in enumerate(chunks[:3]):  # Log first 3 chunks

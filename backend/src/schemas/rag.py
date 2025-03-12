@@ -11,6 +11,7 @@ class SearchRequest(BaseModel):
     query: str
     top_k: int = 5
     similarity_threshold: float = 0.5
+    use_grag: bool = False
 
 class ContextRequest(BaseModel):
     query: str

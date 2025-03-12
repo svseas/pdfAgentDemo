@@ -8,6 +8,9 @@ PDF Chat demo application using RAG (Retrieval Augmented Generation) that integr
 ### PDF Processing Module (src/pdf_processor.py)
 - Uses unstructured library to extract text from PDFs
 - Handles PDF parsing, text cleaning, and chunking
+- Supports two chunking methods:
+  * Semantic chunking: Uses semantic text splitting for general documents
+  * Agentic chunking: Intelligent chunking for legal documents using LLM
 - Generates embeddings using sentence-transformers
 
 ### Vector Store Module (src/vector_store.py)
@@ -30,6 +33,16 @@ PDF Chat demo application using RAG (Retrieval Augmented Generation) that integr
   - Graph Processor: Extracts and analyzes graph features
   - GNN Reranker: Learns and applies graph-based relationships
 
+### Agentic Chunking Module (src/domain/agentic_chunker.py)
+- Provides intelligent document chunking for legal documents
+- Uses LLM to:
+  * Detect document structure and hierarchy
+  * Generate context-aware chunking instructions
+  * Create semantically meaningful chunks
+- Maintains legal context and cross-references
+- Supports both Vietnamese and English documents
+- Includes semantic chunking fallback for reliability
+
 ### Chat Module (src/chat.py)
 - Implements async streaming chat completion using httpx
 - Connects to local LM Studio API (http://127.0.0.1:1234)
@@ -39,11 +52,12 @@ PDF Chat demo application using RAG (Retrieval Augmented Generation) that integr
 ## Dependencies
 - httpx: For async HTTP requests
 - python-dotenv: For environment variable management
-- unstructured: For PDF text extraction
+- unstructured: For PDF text extraction and processing
 - pgvector: For vector similarity search in PostgreSQL
 - sentence-transformers: For generating text embeddings
 - pdf2image: For PDF preprocessing
 - python-magic: For file type detection
+- requests: For LLM API calls in agentic chunking
 - torch: Deep learning framework for GRAG
 - networkx: Graph operations and analysis
 - penman: AMR graph parsing
@@ -74,7 +88,9 @@ CREATE INDEX ON documents USING ivfflat (embedding vector_cosine_ops);
 ## RAG Process Flow
 1. PDF Processing:
    - Extract text from PDF using unstructured
-   - Clean and chunk text into manageable segments
+   - Clean and chunk text using either:
+     * Semantic chunking for general documents
+     * Agentic chunking for legal documents (preserves legal context)
    - Generate embeddings for each chunk
 
 2. Storage:

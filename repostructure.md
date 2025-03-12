@@ -16,6 +16,7 @@ backend/
 │   │   │   ├── models.py           # AMR parsing and graph processing models
 │   │   │   └── service.py          # GRAG service implementation
 │   │   ├── pdf_processor.py        # PDF processing logic
+│   │   ├── agentic_chunker.py      # Intelligent legal document chunking
 │   │   ├── embedding_generator.py   # Text embedding generation
 │   │   └── query_processor.py      # Query processing and response generation
 │   ├── models/

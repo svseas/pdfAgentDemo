@@ -1,4 +1,4 @@
-from typing import Optional, Any, List
+from typing import Optional, Any, List, Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
@@ -13,11 +13,11 @@ class Settings(BaseSettings):
 
     # LM Studio Settings
     LMSTUDIO_BASE_URL: str = Field(
-        default="http://127.0.0.1:1234/v1",
+        default="http://localhost:1234/v1",
         description="LM Studio API base URL"
     )
     LMSTUDIO_MODEL: str = Field(
-        default="Llama3-DocChat-1.0-8B",
+        default="llama3-docchat-1.0-8b-i1",
         description="Model to use for chat completions"
     )
     LMSTUDIO_TIMEOUT: float = Field(
@@ -49,6 +49,24 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = Field(
         default=50,
         description="Number of overlapping characters between chunks"
+    )
+
+    # Chunking Settings
+    CHUNKING_METHOD: Literal["semantic", "agentic"] = Field(
+        default="semantic",
+        description="Method to use for text chunking (semantic or agentic)"
+    )
+    AGENTIC_CHUNKING_LANGUAGE: str = Field(
+        default="vietnamese",
+        description="Language for agentic chunking (vietnamese or english)"
+    )
+    AGENTIC_MIN_CHUNK_SIZE: int = Field(
+        default=100,
+        description="Minimum size for agentic chunks"
+    )
+    AGENTIC_MAX_CHUNK_SIZE: int = Field(
+        default=1500,
+        description="Maximum size for agentic chunks"
     )
 
     # RAG Settings
