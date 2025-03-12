@@ -232,11 +232,12 @@ class QueryProcessor:
         system_message = (
             "Bạn là một trợ lý AI chuyên nghiệp, giúp người dùng hiểu nội dung văn bản. "
             "Khi trả lời câu hỏi, hãy:\n"
-            "1. Tập trung vào thông tin được hỏi\n"
-            "2. Trích dẫn các con số cụ thể nếu có\n"
-            "3. Liệt kê đầy đủ các đối tượng được đề cập\n"
-            "4. Sắp xếp thông tin một cách logic\n"
-            "5. Sử dụng ngôn ngữ rõ ràng, chính xác\n\n"
+            "1. Tổ chức câu trả lời theo cấu trúc rõ ràng với các mục và tiêu đề phù hợp\n"
+            "2. Sắp xếp thông tin theo trình tự thời gian hoặc logic\n"
+            "3. Trích dẫn đầy đủ các sự kiện, ngày tháng và con số quan trọng\n"
+            "4. Nêu rõ các mốc lịch sử và sự kiện quan trọng\n"
+            "5. Phân tích ý nghĩa và tầm quan trọng của các sự kiện\n"
+            "6. Kết luận bằng việc tổng hợp các điểm chính và ý nghĩa lịch sử\n\n"
             "Nếu văn bản không có thông tin cần thiết, hãy nêu rõ điều này."
         )
         
@@ -251,7 +252,7 @@ Hãy trả lời dựa trên nội dung văn bản được cung cấp. Nếu n�
 
         # Prepare the request payload to match working curl command exactly
         payload = {
-            "model": "llama3-docchat-1.0-8b-i1",  # Hardcode model name for testing
+            "model": "qwen2.5-7b-instruct-1m",  # Try Qwen model first
             "messages": [
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": user_message}
@@ -264,45 +265,63 @@ Hãy trả lời dựa trên nội dung văn bản được cung cấp. Nếu n�
         # Log the constructed payload
         logger.debug(f"Constructed payload: {payload}")
 
-        # Make request to LMStudio
-        async with httpx.AsyncClient(timeout=settings.LMSTUDIO_TIMEOUT) as client:
+        # List of models to try in order
+        models = [
+            "qwen2.5-7b-instruct-1m",  # Try Qwen first
+            "llama3-docchat-1.0-8b-i1",  # Fallback to Llama if Qwen fails
+        ]
+        
+        last_error = None
+        for model in models:
             try:
-                # Log request details for debugging
-                logger.debug(f"Making request to URL: {self.llm_url}")
-                logger.debug(f"Request payload: {payload}")
+                logger.info(f"Attempting to use model: {model}")
+                payload["model"] = model
                 
-                # Make request with exact same structure as working curl command
-                response = await client.post(
-                    self.llm_url,
-                    json=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Accept": "application/json"
-                    }
-                )
-                
-                # Log response details
-                logger.debug(f"Response status: {response.status_code}")
-                logger.debug(f"Response headers: {response.headers}")
-                
-                response.raise_for_status()
-                response_data = response.json()
-                logger.debug(f"Response data: {response_data}")
-                
-                if "choices" not in response_data:
-                    logger.error(f"Unexpected response format: {response_data}")
-                    raise Exception(f"Unexpected response format: {response_data}")
-                
-                initial_answer = response_data["choices"][0]["message"]["content"]
-                
-                # Enhance answer using stepback prompting
-                enhanced_answer = await self.stepback_agent.enhance_answer(
-                    context=context,
-                    query=query,
-                    initial_answer=initial_answer
-                )
-                
-                return enhanced_answer
-            except httpx.RequestError as e:
-                logger.error(f"Error calling LMStudio API: {str(e)}")
-                raise Exception(f"Error generating response from LLM: {str(e)}")
+                async with httpx.AsyncClient(timeout=settings.LMSTUDIO_TIMEOUT) as client:
+                    # Log request details
+                    logger.debug(f"Making request to URL: {self.llm_url}")
+                    logger.debug(f"Request payload: {payload}")
+                    
+                    # Make request
+                    response = await client.post(
+                        self.llm_url,
+                        json=payload,
+                        headers={
+                            "Content-Type": "application/json",
+                            "Accept": "application/json"
+                        }
+                    )
+                    
+                    # Log response details
+                    logger.debug(f"Response status: {response.status_code}")
+                    logger.debug(f"Response headers: {response.headers}")
+                    
+                    response.raise_for_status()
+                    response_data = response.json()
+                    logger.debug(f"Response data: {response_data}")
+                    
+                    if "choices" not in response_data:
+                        raise Exception(f"Unexpected response format: {response_data}")
+                    
+                    initial_answer = response_data["choices"][0]["message"]["content"]
+                    
+                    # If we got here, the model worked
+                    logger.info(f"Successfully generated response using model: {model}")
+                    
+                    # Enhance answer using stepback prompting
+                    enhanced_answer = await self.stepback_agent.enhance_answer(
+                        context=context,
+                        query=query,
+                        initial_answer=initial_answer
+                    )
+                    
+                    return enhanced_answer
+                    
+            except Exception as e:
+                logger.error(f"Error with model {model}: {str(e)}")
+                last_error = e
+                continue  # Try next model
+        
+        # If we get here, all models failed
+        logger.error("All models failed to generate response")
+        raise Exception(f"Failed to generate response with any model. Last error: {str(last_error)}")

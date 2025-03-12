@@ -51,50 +51,65 @@ Câu trả lời ban đầu:
 
 Hãy đưa ra câu trả lời toàn diện hơn:"""
 
+    async def _try_models(self, prompt: str) -> str:
+        """Try different models in sequence until one works."""
+        models = [
+            "qwen2.5-7b-instruct-1m",  # Try Qwen first
+            "llama3-docchat-1.0-8b-i1",  # Fallback to Llama if Qwen fails
+        ]
+        
+        last_error = None
+        for model in models:
+            try:
+                logger.info(f"Attempting to use model: {model}")
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.7,
+                    "max_tokens": -1,
+                    "stream": False
+                }
+                
+                async with httpx.AsyncClient(timeout=settings.LMSTUDIO_TIMEOUT) as client:
+                    response = await client.post(
+                        self.llm_url,
+                        json=payload,
+                        headers={
+                            "Content-Type": "application/json",
+                            "Accept": "application/json"
+                        }
+                    )
+                    response.raise_for_status()
+                    response_data = response.json()
+                    
+                    if "choices" not in response_data:
+                        raise Exception(f"Unexpected response format: {response_data}")
+                    
+                    logger.info(f"Successfully generated response using model: {model}")
+                    return response_data["choices"][0]["message"]["content"]
+                    
+            except Exception as e:
+                logger.error(f"Error with model {model}: {str(e)}")
+                last_error = e
+                continue
+        
+        # If all models failed
+        logger.error("All models failed to generate response")
+        return ""  # Return empty string as fallback
+
     async def generate_stepback(self, context: str, query: str) -> str:
         """Generate a higher-level perspective on the query."""
-        # Format prompt
         prompt = self.stepback_prompt.format(
             context=context,
             query=query
         )
         
-        # Prepare payload
-        payload = {
-            "model": "llama3-docchat-1.0-8b-i1",
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.7,
-            "max_tokens": -1,
-            "stream": False
-        }
-        
-        # Make request to LMStudio
-        async with httpx.AsyncClient(timeout=settings.LMSTUDIO_TIMEOUT) as client:
-            try:
-                response = await client.post(
-                    self.llm_url,
-                    json=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Accept": "application/json"
-                    }
-                )
-                response.raise_for_status()
-                response_data = response.json()
-                
-                if "choices" not in response_data:
-                    logger.error(f"Unexpected response format: {response_data}")
-                    raise Exception(f"Unexpected response format: {response_data}")
-                
-                return response_data["choices"][0]["message"]["content"]
-            except Exception as e:
-                logger.error(f"Error generating stepback perspective: {str(e)}")
-                return ""
+        return await self._try_models(prompt)
 
-    async def enhance_answer(self, 
-                           context: str, 
+    async def enhance_answer(self,
+                           context: str,
                            query: str,
                            initial_answer: str) -> str:
         """Enhance the initial answer using stepback prompting."""
@@ -113,45 +128,18 @@ Hãy đưa ra câu trả lời toàn diện hơn:"""
             initial_answer=initial_answer
         )
         
-        # Prepare payload
-        payload = {
-            "model": "llama3-docchat-1.0-8b-i1",
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.7,
-            "max_tokens": -1,
-            "stream": False
-        }
+        # Try to generate enhanced answer with fallback
+        enhanced_answer = await self._try_models(prompt)
         
-        # Make request to LMStudio
-        async with httpx.AsyncClient(timeout=settings.LMSTUDIO_TIMEOUT) as client:
-            try:
-                response = await client.post(
-                    self.llm_url,
-                    json=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Accept": "application/json"
-                    }
-                )
-                response.raise_for_status()
-                response_data = response.json()
-                
-                if "choices" not in response_data:
-                    logger.error(f"Unexpected response format: {response_data}")
-                    return initial_answer
-                
-                enhanced_answer = response_data["choices"][0]["message"]["content"]
-                
-                # Format final response to include reasoning
-                final_response = f"""Phân tích tổng quan:
+        if not enhanced_answer:
+            logger.warning("Failed to generate enhanced answer, returning initial answer")
+            return initial_answer
+            
+        # Format final response to include reasoning
+        final_response = f"""Phân tích tổng quan:
 {stepback_result}
 
 Câu trả lời chi tiết:
 {enhanced_answer}"""
-                
-                return final_response
-            except Exception as e:
-                logger.error(f"Error enhancing answer: {str(e)}")
-                return initial_answer
+        
+        return final_response

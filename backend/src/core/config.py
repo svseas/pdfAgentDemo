@@ -21,8 +21,8 @@ class Settings(BaseSettings):
         description="Model to use for chat completions"
     )
     LMSTUDIO_TIMEOUT: float = Field(
-        default=30.0,
-        description="Timeout for LM Studio API requests"
+        default=120.0,
+        description="Timeout for LM Studio API requests (increased for larger models)"
     )
 
     # Database Settings
