@@ -117,7 +117,7 @@ class CitationAgent(BaseAgent):
         if self.llm and self.prompt_manager:
             try:
                 return await self._extract_citations_llm(text)
-            except Exception as e:
+            except Exception:
                 # Fallback to regex on LLM failure
                 return await self._extract_citations_regex(text)
         return await self._extract_citations_regex(text)

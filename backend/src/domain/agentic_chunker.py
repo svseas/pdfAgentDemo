@@ -1,11 +1,10 @@
 """Agentic chunking implementation."""
-import json
 import random
 import requests
 import logging
 import time
 from typing import List, Dict, Any
-from src.domain.interfaces import TextSplitterInterface, LLMInterface
+from src.domain.interfaces import TextSplitterInterface
 from src.domain.exceptions import ChunkingError, LLMError
 from src.domain.semantic_text_splitter import SemanticTextSplitter
 

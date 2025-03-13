@@ -1,5 +1,5 @@
 """Query synthesis and answer generation agent."""
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.repositories.workflow_repository import (
