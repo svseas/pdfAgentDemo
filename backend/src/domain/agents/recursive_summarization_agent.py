@@ -1,15 +1,16 @@
 """Recursive document summarization agent."""
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-
-logger = logging.getLogger(__name__)
-
 from src.repositories.workflow_repository import SQLContextRepository
 from src.domain.pdf_processor import PDFProcessor
 from src.domain.embedding_generator import EmbeddingGenerator
+from src.domain.agents.base_agent import BaseAgent
 from src.core.llm.interfaces import LLMInterface, PromptTemplateInterface
-from .base_agent import BaseAgent
+
+logger = logging.getLogger(__name__)
+
+
 
 LLMType = LLMInterface | None
 PromptManagerType = PromptTemplateInterface | None
@@ -161,14 +162,14 @@ class RecursiveSummarizationAgent(BaseAgent):
                     summary_text = batch_text[:max_length]
                 
                 # Generate embedding for batch summary
-                embedding = self.embedding_generator.generate_embedding(summary_text)
+                embedding = await self.embedding_generator.generate_embedding(summary_text)
                 
                 # Store batch summary with chunk range metadata and embedding
                 summary_id = await context_repo.create_summary(
                     document_id=document_id,
                     summary_level=1,  # Chunk batch level
                     summary_text=summary_text,
-                    embedding=embedding,
+                    summary_embedding=embedding,
                     summary_metadata={
                         "chunk_start": i,
                         "chunk_end": i + len(batch) - 1,
@@ -220,14 +221,14 @@ class RecursiveSummarizationAgent(BaseAgent):
                     summary_text = combined_text[:max_length]
                 
                 # Generate embedding for intermediate summary
-                summary_embedding = self.embedding_generator.generate_embedding(summary_text)
+                summary_embedding = await self.embedding_generator.generate_embedding(summary_text)
                 
                 # Store intermediate summary with embedding
                 summary_id = await context_repo.create_summary(
                     document_id=document_id,
                     summary_level=2,  # Intermediate level
                     summary_text=summary_text,
-                    embedding=summary_embedding,
+                    summary_embedding=summary_embedding,
                     summary_metadata={
                         "batch_start": i,
                         "batch_end": i + len(current_batch) - 1,
@@ -283,14 +284,14 @@ class RecursiveSummarizationAgent(BaseAgent):
                 summary_text = combined_text[:max_length]
             
             # Generate embedding for final summary
-            summary_embedding = self.embedding_generator.generate_embedding(summary_text)
+            summary_embedding = await self.embedding_generator.generate_embedding(summary_text)
             
             # Store final summary with embedding
             final_summary_id = await context_repo.create_summary(
                 document_id=document_id,
                 summary_level=3,  # Document level
                 summary_text=summary_text,
-                embedding=summary_embedding,
+                summary_embedding=summary_embedding,
                 summary_metadata={
                     "total_chunks": len(chunks),
                     "total_batches": len(batch_summaries),

@@ -94,12 +94,14 @@ async def get_summarization_agent(
 
 async def get_query_analyzer_agent(
     session: AsyncSession = Depends(get_db),
-    llm_service: LLMService = Depends(get_llm_service)
+    llm_service: LLMService = Depends(get_llm_service),
+    prompt_manager: PromptTemplateInterface = Depends(get_prompt_manager)
 ) -> QueryAnalyzerAgent:
     """Get query analyzer agent instance."""
     return QueryAnalyzerAgent(
         session=session,
-        llm=llm_service
+        llm=llm_service,
+        prompt_manager=prompt_manager
     )
 
 async def get_citation_agent(

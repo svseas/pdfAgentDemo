@@ -24,7 +24,7 @@ class LMStudioEmbeddingGenerator(EmbeddingGeneratorInterface):
         self.timeout = timeout
         self.model = "text-embedding-nomic-embed-text-v1.5"
         
-    def _check_service_health(self) -> None:
+    async def _check_service_health(self) -> None:
         """Check if LMStudio service is available."""
         try:
             requests.get(self.api_url, timeout=5).raise_for_status()
@@ -32,7 +32,7 @@ class LMStudioEmbeddingGenerator(EmbeddingGeneratorInterface):
             logger.error(f"LMStudio is not available: {str(e)}")
             raise EmbeddingError(f"LMStudio is not running at {self.api_url}")
             
-    def _call_embeddings_api(self, texts: List[str]) -> List[np.ndarray]:
+    async def _call_embeddings_api(self, texts: List[str]) -> List[np.ndarray]:
         """Call LMStudio embeddings API."""
         try:
             response = requests.post(
@@ -55,13 +55,13 @@ class LMStudioEmbeddingGenerator(EmbeddingGeneratorInterface):
         except RequestException as e:
             raise EmbeddingError(f"Failed to generate embeddings: {str(e)}")
             
-    def _generate_mock_embedding(self, count: int = 1) -> List[np.ndarray]:
+    async def _generate_mock_embedding(self, count: int = 1) -> List[np.ndarray]:
         """Generate mock embeddings for fallback."""
         logger.warning("Using mock embeddings")
         mock_embedding = np.random.rand(768)  # Standard embedding size
         return [mock_embedding for _ in range(count)]
 
-    def generate_embeddings(self, texts: Union[str, List[str]]) -> List[np.ndarray]:
+    async def generate_embeddings(self, texts: Union[str, List[str]]) -> List[np.ndarray]:
         """
         Generate embeddings for texts.
         
@@ -80,8 +80,8 @@ class LMStudioEmbeddingGenerator(EmbeddingGeneratorInterface):
             return []
             
         try:
-            self._check_service_health()
-            embeddings = self._call_embeddings_api(texts)
+            await self._check_service_health()
+            embeddings = await self._call_embeddings_api(texts)
             
             logger.info(f"Generated {len(embeddings)} embeddings")
             if embeddings:
@@ -91,9 +91,9 @@ class LMStudioEmbeddingGenerator(EmbeddingGeneratorInterface):
             
         except EmbeddingError:
             # Fallback to mock embeddings
-            return self._generate_mock_embedding(len(texts))
+            return await self._generate_mock_embedding(len(texts))
 
-    def generate_embedding(self, text: str) -> np.ndarray:
+    async def generate_embedding(self, text: str) -> np.ndarray:
         """
         Generate embedding for single text.
         
@@ -106,7 +106,7 @@ class LMStudioEmbeddingGenerator(EmbeddingGeneratorInterface):
         Raises:
             EmbeddingError: If embedding generation fails
         """
-        embeddings = self.generate_embeddings(text)
+        embeddings = await self.generate_embeddings(text)
         return embeddings[0]
 
 # For backward compatibility

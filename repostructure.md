@@ -22,7 +22,7 @@ backend/
 │   │   │   ├── base_agent.py       # Base agent implementation
 │   │   │   ├── citation_agent.py   # Citation extraction agent
 │   │   │   ├── context_builder_agent.py  # Context retrieval agent
-│   │   │   ├── query_analyzer_agent.py   # Query analysis agent
+│   │   │   ├── query_analyzer_agent.py   # Query analysis agent with summary-based context
 │   │   │   ├── query_synthesizer_agent.py # Answer synthesis agent
 │   │   │   └── recursive_summarization_agent.py  # Document summarization agent
 │   │   ├── grag/                   # Graph-based Reranking (GRAG) package
@@ -31,7 +31,7 @@ backend/
 │   │   │   └── service.py          # GRAG service implementation
 │   │   ├── pdf_processor.py        # PDF processing logic
 │   │   ├── agentic_chunker.py      # Intelligent legal document chunking
-│   │   ├── embedding_generator.py   # Text embedding generation
+│   │   ├── embedding_generator.py   # Async text embedding generation with LMStudio
 │   │   ├── query_processor.py      # Query processing and response generation
 │   │   ├── stepback_agent.py       # Stepback prompting agent
 │   │   ├── interfaces.py           # Domain interfaces
@@ -42,8 +42,8 @@ backend/
 │   │   ├── document.py             # Document and metadata models
 │   │   └── workflow.py             # Workflow tracking models
 │   ├── repositories/
-│   │   ├── document_repository.py  # Document data access layer
-│   │   └── workflow_repository.py  # Workflow data access layer
+│   │   ├── document_repository.py  # Document and summary data access with vector search
+│   │   └── workflow_repository.py  # Workflow and summary context tracking
 │   ├── schemas/
 │   │   └── document.py             # Pydantic schemas for documents
 │   ├── services/

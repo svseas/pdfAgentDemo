@@ -18,6 +18,7 @@ class QueryAnalyzerAgent(BaseAgent):
         """Initialize agent with embedding generator."""
         super().__init__(session, llm, prompt_manager)
         self.embedding_generator = EmbeddingGenerator()
+        self.prompt_builder = prompt_manager if prompt_manager else None
     
     def cosine_similarity(self, v1: List[float], v2: List[float]) -> float:
         """Calculate cosine similarity between two vectors."""
@@ -25,22 +26,37 @@ class QueryAnalyzerAgent(BaseAgent):
         v2_array = np.array(v2)
         return np.dot(v1_array, v2_array) / (np.linalg.norm(v1_array) * np.linalg.norm(v2_array))
 
+    async def get_all_document_ids(self) -> List[int]:
+        """Get all document IDs from the repository."""
+        from src.repositories.document_repository import DocumentRepository
+        doc_repo = DocumentRepository(self.session)
+        return await doc_repo.get_all_document_ids()
+
     async def get_relevant_summaries(
         self,
         query_embedding: List[float],
-        document_id: int,
         top_k: int = 10
     ) -> List[Tuple[Dict[str, Any], float]]:
-        """Get most relevant summaries for a query."""
+        """Get most relevant summaries across all documents for a query."""
         context_repo = SQLContextRepository(self.session)
-        summaries = await context_repo.get_document_summaries(document_id)
         
-        # Combine all summaries with embeddings
+        # Get all document IDs
+        document_ids = await self.get_all_document_ids()
+        
+        # Combine all summaries with embeddings from all documents
         all_summaries = []
-        if summaries["final_summary"] and summaries["final_summary"]["embedding"]:
-            all_summaries.append(summaries["final_summary"])
-        all_summaries.extend(summaries["intermediate_summaries"])
-        all_summaries.extend(summaries["chunk_summaries"])
+        for doc_id in document_ids:
+            summaries = await context_repo.get_document_summaries(doc_id)
+            if summaries["final_summary"] and summaries["final_summary"]["embedding"]:
+                summary = summaries["final_summary"]
+                summary["document_id"] = doc_id
+                all_summaries.append(summary)
+            for summary in summaries["intermediate_summaries"]:
+                summary["document_id"] = doc_id
+                all_summaries.append(summary)
+            for summary in summaries["chunk_summaries"]:
+                summary["document_id"] = doc_id
+                all_summaries.append(summary)
         
         # Calculate similarities and sort
         scored_summaries = []
@@ -56,8 +72,8 @@ class QueryAnalyzerAgent(BaseAgent):
         """Process input data and return output."""
         workflow_run_id = input_data.get("workflow_run_id")
         query_text = input_data.get("query_text")
-        document_id = input_data.get("document_id")
-        language = input_data.get("language", "vi")
+        # Normalize language code
+        language = "vi" if input_data.get("language", "vi").lower() in ["vi", "vietnamese"] else "en"
         
         # Log step start
         agent_step_id = await self.log_step(
@@ -73,16 +89,21 @@ class QueryAnalyzerAgent(BaseAgent):
             context_repo = SQLContextRepository(self.session)
             sub_queries = []
             
+            # Initialize variables
+            relevant_summaries = []
+            stepback_result = None
+            decomposition_strategy = "template-based fallback"
+
             if self.llm and self.prompt_manager:
                 # Generate query embedding
                 query_embedding = await self.embedding_generator.generate_embedding(query_text)
                 
-                # Get relevant summaries
+                # Get relevant summaries from all documents
                 relevant_summaries = await self.get_relevant_summaries(
                     query_embedding,
-                    document_id,
                     top_k=10
                 )
+                decomposition_strategy = "LLM-based with summary context"
                 
                 # Build context from top summaries
                 context = "\n\n".join([
@@ -139,7 +160,7 @@ class QueryAnalyzerAgent(BaseAgent):
                 for summary, score in relevant_summaries:
                     await context_repo.create_context_result(
                         agent_step_id=agent_step_id,
-                        document_id=document_id,
+                        document_id=summary["document_id"],
                         chunk_id=None,
                         summary_id=summary["id"],
                         relevance_score=score,
@@ -181,18 +202,18 @@ class QueryAnalyzerAgent(BaseAgent):
             output_data = {
                 "original_query": query_text,
                 "sub_queries": sub_queries,
-                "document_id": document_id,
                 "reasoning": {
                     "relevant_summaries": [
                         {
                             "text": summary["text"],
                             "score": score,
-                            "level": summary["metadata"].get("level", 0)
+                            "level": summary["metadata"].get("level", 0),
+                            "document_id": summary["document_id"]
                         }
                         for summary, score in relevant_summaries
-                    ],
-                    "stepback_analysis": stepback_result if self.llm else "Using template-based decomposition due to LLM unavailability",
-                    "decomposition_strategy": "LLM-based with summary context" if self.llm else "Template-based fallback"
+                    ] if relevant_summaries else [],
+                    "stepback_analysis": stepback_result if stepback_result else "Using template-based decomposition due to LLM unavailability",
+                    "decomposition_strategy": decomposition_strategy
                 }
             }
             

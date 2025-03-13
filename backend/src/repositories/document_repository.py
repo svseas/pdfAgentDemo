@@ -52,6 +52,13 @@ class DocumentRepository:
         )
         return list(result.scalars().all())
 
+    async def get_all_document_ids(self) -> List[int]:
+        """Get all document IDs."""
+        result = await self._db.execute(
+            select(DocumentMetadata.id).where(DocumentMetadata.processing_status == "completed")
+        )
+        return [row[0] for row in result.fetchall()]
+
     async def create_chunk(self, chunk: DocumentChunkCreate) -> Document:
         """Create a new document chunk"""
         # Convert numpy array to list if needed
