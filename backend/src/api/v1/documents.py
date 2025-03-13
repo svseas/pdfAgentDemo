@@ -3,18 +3,39 @@ import numpy as np
 import logging
 import shutil
 from pathlib import Path
+from datetime import datetime
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.embedding_generator import EmbeddingGenerator
 from src.domain.query_processor import QueryProcessor
-from src.api.dependencies import get_embedding_generator, get_query_processor, get_document_repository, get_document_service
+from src.api.dependencies import (
+    get_embedding_generator, 
+    get_query_processor, 
+    get_document_repository, 
+    get_document_service,
+    get_summarization_agent,
+    get_query_analyzer_agent,
+    get_citation_agent,
+    get_query_synthesizer_agent,
+    get_db
+)
 from src.repositories.document_repository import DocumentRepository
+from src.repositories.workflow_repository import SQLQueryRepository, SQLWorkflowRepository
 from src.services.document_service import DocumentService
+from src.domain.agents.recursive_summarization_agent import RecursiveSummarizationAgent
+from src.domain.agents.query_analyzer_agent import QueryAnalyzerAgent
+from src.domain.agents.citation_agent import CitationAgent
+from src.domain.agents.query_synthesizer_agent import QuerySynthesizerAgent
 from src.schemas.rag import (
     VectorizeRequest,
     VectorResponse,
     SearchRequest,
     ContextRequest,
-    QueryRequest
+    QueryRequest,
+    SummarizeRequest,
+    QueryAnalysisRequest,
+    CitationRequest,
+    SynthesisRequest
 )
 
 logger = logging.getLogger(__name__)
@@ -168,3 +189,172 @@ async def build_context(
         request.temperature
     )
     return {"response": response}
+
+@router.post("/summarize", response_model=dict)
+async def summarize_document(
+    request: SummarizeRequest,
+    summarization_agent: RecursiveSummarizationAgent = Depends(get_summarization_agent),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Generate a recursive summary of a document"""
+    try:
+        # Create a workflow run for this request
+        query_repo = SQLQueryRepository(db)
+        workflow_repo = SQLWorkflowRepository(db)
+        
+        # Create a system query for summarization
+        query_text = f"Summarize document {request.document_id}"
+        query_id = await query_repo.create_user_query(query_text)
+        
+        # Create workflow run
+        workflow_run_id = await workflow_repo.create_workflow_run(
+            user_query_id=query_id,
+            status="running"
+        )
+        
+        # Process request with workflow context
+        input_data = {
+            "workflow_run_id": workflow_run_id,
+            "document_id": int(request.document_id),  # Convert to int
+            "language": request.language,
+            "max_length": request.max_length
+        }
+        
+        result = await summarization_agent.process(input_data)
+        
+        # Update workflow status
+        await workflow_repo.update_workflow_status(
+            workflow_run_id,
+            "completed"
+        )
+        
+        return {
+            "document_id": input_data["document_id"],
+            "chunk_summaries": result.get("chunk_summaries", []),
+            "intermediate_summaries": result.get("intermediate_summaries", []),
+            "final_summary": result.get("final_summary", ""),
+            "metadata": result.get("metadata", {})
+        }
+    except Exception as e:
+        logger.error(f"Error summarizing document: {str(e)}")
+        if 'workflow_run_id' in locals():
+            await workflow_repo.update_workflow_status(
+                workflow_run_id,
+                "failed"
+            )
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/analyze-query", response_model=dict)
+async def analyze_query(
+    request: QueryAnalysisRequest,
+    query_analyzer: QueryAnalyzerAgent = Depends(get_query_analyzer_agent),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Analyze query using stepback prompting"""
+    try:
+        # Create a workflow run for this query
+        query_repo = SQLQueryRepository(db)
+        workflow_repo = SQLWorkflowRepository(db)
+        
+        # Create user query
+        query_id = await query_repo.create_user_query(request.query)
+        
+        # Create workflow run
+        workflow_run_id = await workflow_repo.create_workflow_run(
+            user_query_id=query_id,
+            status="running"
+        )
+        
+        # Process query with workflow context
+        input_data = {
+            "workflow_run_id": workflow_run_id,
+            "query_id": query_id,
+            "query_text": request.query,
+            "language": request.language
+        }
+        
+        analysis = await query_analyzer.process(input_data)
+        
+        # Update workflow status
+        await workflow_repo.update_workflow_status(
+            workflow_run_id,
+            "completed"
+        )
+        
+        return {"analysis": analysis}
+    except Exception as e:
+        logger.error(f"Error analyzing query: {str(e)}")
+        if 'workflow_run_id' in locals():
+            await workflow_repo.update_workflow_status(
+                workflow_run_id,
+                "failed"
+            )
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/extract-citations", response_model=dict)
+async def extract_citations(
+    request: CitationRequest,
+    citation_agent: CitationAgent = Depends(get_citation_agent),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Extract relevant citations from document"""
+    try:
+        # Create a workflow run for this request
+        query_repo = SQLQueryRepository(db)
+        workflow_repo = SQLWorkflowRepository(db)
+        
+        # Create user query
+        query_id = await query_repo.create_user_query(request.query)
+        
+        # Create workflow run
+        workflow_run_id = await workflow_repo.create_workflow_run(
+            user_query_id=query_id,
+            status="running"
+        )
+        
+        # Process request with workflow context
+        input_data = {
+            "workflow_run_id": workflow_run_id,
+            "query_id": query_id,
+            "document_id": int(request.document_id),  # Convert to int
+            "query_text": request.query,
+            "language": request.language
+        }
+        
+        result = await citation_agent.process(input_data)
+        
+        # Update workflow status
+        await workflow_repo.update_workflow_status(
+            workflow_run_id,
+            "completed"
+        )
+        
+        return {"citations": result.get("citations", [])}
+    except Exception as e:
+        logger.error(f"Error extracting citations: {str(e)}")
+        if 'workflow_run_id' in locals():
+            await workflow_repo.update_workflow_status(
+                workflow_run_id,
+                "failed"
+            )
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/synthesize", response_model=dict)
+async def synthesize_answer(
+    request: SynthesisRequest,
+    synthesizer: QuerySynthesizerAgent = Depends(get_query_synthesizer_agent)
+) -> dict:
+    """Synthesize final answer using analyzed query, context and citations"""
+    try:
+        answer = await synthesizer.synthesize(
+            query=request.query,
+            analyzed_query=request.analyzed_query,
+            context=request.context,
+            citations=request.citations,
+            language=request.language,
+            temperature=request.temperature
+        )
+        return {"answer": answer}
+    except Exception as e:
+        logger.error(f"Error synthesizing answer: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -5,11 +5,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import settings
 from src.core.database import AsyncSessionLocal
 from src.core.llm_service import LLMService
+from src.core.llm.interfaces import PromptTemplateInterface
 from src.domain.embedding_generator import EmbeddingGenerator
 from src.domain.pdf_processor import PDFProcessor
 from src.domain.query_processor import QueryProcessor
 from src.repositories.document_repository import DocumentRepository
 from src.services.document_service import DocumentService
+from src.domain.agents.recursive_summarization_agent import RecursiveSummarizationAgent
+from src.domain.agents.query_analyzer_agent import QueryAnalyzerAgent
+from src.domain.agents.citation_agent import CitationAgent
+from src.domain.agents.query_synthesizer_agent import QuerySynthesizerAgent
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Get async database session."""
@@ -64,4 +69,55 @@ async def get_document_service(
         pdf_processor=pdf_processor,
         embedding_generator=embedding_generator,
         query_processor=query_processor
+    )
+
+def get_prompt_manager() -> PromptTemplateInterface:
+    """Get prompt manager instance."""
+    from src.core.llm.prompts import PromptManager
+    return PromptManager()
+
+async def get_summarization_agent(
+    session: AsyncSession = Depends(get_db),
+    llm_service: LLMService = Depends(get_llm_service),
+    pdf_processor: PDFProcessor = Depends(get_pdf_processor),
+    prompt_manager: PromptTemplateInterface = Depends(get_prompt_manager),
+    embedding_generator: EmbeddingGenerator = Depends(get_embedding_generator)
+) -> RecursiveSummarizationAgent:
+    """Get summarization agent instance."""
+    return RecursiveSummarizationAgent(
+        session=session,
+        pdf_processor=pdf_processor,
+        embedding_generator=embedding_generator,
+        llm=llm_service,
+        prompt_manager=prompt_manager
+    )
+
+async def get_query_analyzer_agent(
+    session: AsyncSession = Depends(get_db),
+    llm_service: LLMService = Depends(get_llm_service)
+) -> QueryAnalyzerAgent:
+    """Get query analyzer agent instance."""
+    return QueryAnalyzerAgent(
+        session=session,
+        llm=llm_service
+    )
+
+async def get_citation_agent(
+    session: AsyncSession = Depends(get_db),
+    llm_service: LLMService = Depends(get_llm_service)
+) -> CitationAgent:
+    """Get citation agent instance."""
+    return CitationAgent(
+        session=session,
+        llm=llm_service
+    )
+
+async def get_query_synthesizer_agent(
+    session: AsyncSession = Depends(get_db),
+    llm_service: LLMService = Depends(get_llm_service)
+) -> QuerySynthesizerAgent:
+    """Get query synthesizer agent instance."""
+    return QuerySynthesizerAgent(
+        session=session,
+        llm=llm_service
     )
