@@ -5,9 +5,8 @@ import logging
 from pathlib import Path
 import os
 from src.core.config import settings
-from src.core.llm_service import LLMService
 from src.domain.interfaces import QueryProcessorInterface, LLMInterface, EmbeddingGeneratorInterface
-from src.domain.exceptions import QueryProcessingError, LLMError
+from src.domain.exceptions import QueryProcessingError
 
 logger = logging.getLogger(__name__)
 

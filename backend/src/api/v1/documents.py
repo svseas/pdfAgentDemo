@@ -1,9 +1,7 @@
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
-import numpy as np
 import logging
 import shutil
 from pathlib import Path
-from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.embedding_generator import EmbeddingGenerator

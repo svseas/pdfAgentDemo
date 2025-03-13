@@ -1,169 +1,210 @@
 """Citation extraction and processing agent."""
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import re
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.repositories.workflow_repository import (
-    SQLCitationRepository,
-    SQLContextRepository
+    AgentStepRepository,
+    CitationRepository,
+    ContextRepository
 )
+from src.domain.exceptions import AgentError
 from .base_agent import BaseAgent
 
 class CitationAgent(BaseAgent):
-    """Agent that extracts, verifies, and formats citations."""
+    """Agent that extracts, verifies, and formats citations.
     
-    async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Process input data and return output."""
-        workflow_run_id = input_data.get("workflow_run_id")
-        context_results = input_data.get("context_results", [])
+    This agent is responsible for:
+    - Extracting citations from text using LLM or regex
+    - Normalizing citation formats
+    - Determining citation authority levels
+    - Creating citation records and linking them to responses
+    
+    Attributes:
+        citation_repo: Repository for citation operations
+        context_repo: Repository for context operations
+    """
+    
+    def __init__(
+        self,
+        session: AsyncSession,
+        agent_step_repo: AgentStepRepository,
+        citation_repo: CitationRepository,
+        context_repo: ContextRepository,
+        *args,
+        **kwargs
+    ):
+        """Initialize citation agent with required repositories.
         
-        # Log step start
-        agent_step_id = await self.log_step(
-            workflow_run_id,
-            None,
-            input_data,
-            {},
-            "running"
-        )
+        Args:
+            session: Database session
+            agent_step_repo: Repository for agent step logging
+            citation_repo: Repository for citation operations
+            context_repo: Repository for context operations
+            *args, **kwargs: Additional arguments for BaseAgent
+        """
+        super().__init__(session, agent_step_repo, *args, **kwargs)
+        self.citation_repo = citation_repo
+        self.context_repo = context_repo
+
+    async def _process_impl(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Implementation of citation processing logic.
         
+        Args:
+            input_data: Must contain:
+                - workflow_run_id: ID of current workflow run
+                - context_results: List of context result IDs
+                
+        Returns:
+            Dict containing:
+                - citations: List of extracted citations
+                - count: Number of citations extracted
+                
+        Raises:
+            AgentError: If citation processing fails
+        """
         try:
-            citation_repo = SQLCitationRepository(self.session)
-            context_repo = SQLContextRepository(self.session)
-            
-            # Process each context result
+            context_results = input_data.get("context_results", [])
             extracted_citations = []
             
             for context_id in context_results:
-                context = await context_repo.get_by_id(context_id)
+                context = await self._get_context(context_id)
                 if not context:
                     continue
                 
-                # Extract citations from text
+                # Extract citations from context text
                 text = await self._get_context_text(context)
                 citations = await self._extract_citations(text)
                 
+                # Process each citation
                 for citation in citations:
-                    # Create citation record
-                    citation_id = await citation_repo.create_citation(
-                        document_id=context["document_id"],
-                        chunk_id=context.get("chunk_id"),
-                        citation_text=citation["text"],
-                        citation_type=citation["type"],
-                        normalized_format=await self._normalize_citation(citation),
-                        authority_level=await self._determine_authority(citation),
-                        metadata={}
+                    citation_id = await self._create_citation(
+                        context,
+                        citation,
+                        input_data["workflow_run_id"],
+                        context_id
                     )
-                    
-                    # Link to response
-                    await citation_repo.create_response_citation(
-                        workflow_run_id,
-                        citation_id,
-                        context_id,
-                        citation.get("relevance", 0.8)
-                    )
-                    
                     extracted_citations.append({
                         "id": citation_id,
                         **citation
                     })
             
-            output_data = {
+            return {
                 "citations": extracted_citations,
                 "count": len(extracted_citations)
             }
             
-            # Update step status
-            await self._update_step_status(
-                agent_step_id,
-                "success",
-                output_data
-            )
-            
-            return output_data
-            
         except Exception as e:
-            await self._update_step_status(
-                agent_step_id,
-                "failed",
-                {"error": str(e)}
-            )
-            raise
-    
+            raise AgentError(f"Citation processing failed: {str(e)}") from e
+
+    async def _get_context(self, context_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieve context by ID."""
+        try:
+            return await self.context_repo.get_by_id(context_id)
+        except Exception as e:
+            raise AgentError(f"Failed to get context {context_id}: {str(e)}") from e
+
     async def _get_context_text(self, context: Dict[str, Any]) -> str:
-        """Get text from context result."""
+        """Extract text from context result."""
         if context.get("chunk_id"):
             return context.get("chunk_text", "")
         elif context.get("summary_id"):
             return context.get("summary_text", "")
         return ""
-    
+
     async def _extract_citations(self, text: str) -> List[Dict[str, Any]]:
-        """Extract citations from text using LLM."""
-        if not self.llm or not self.prompt_manager:
-            # Fallback to regex-based extraction if LLM not available
-            return await self._extract_citations_regex(text)
-            
-        try:
-            # Use LLM to extract citations
-            prompt = self.prompt_manager.format_prompt(
-                "citation_extraction",
-                language="vi",  # Use Vietnamese for document processing
-                text=text
-            )
-            
-            result = await self.llm.generate_completion([
-                {"role": "system", "content": "You are a citation extraction expert."},
-                {"role": "user", "content": prompt}
-            ])
-            
-            # Parse LLM response to extract citations
-            citations = []
-            for line in result.split("\n"):
-                # Match Vietnamese section patterns
-                if "Mục" in line or "Phần" in line or "Điều" in line:
-                    # Extract section number and text
-                    match = re.search(r"(Mục|Phần|Điều)\s+(\d+(?:\.\d+)?):?\s*(.*)", line)
-                    if match:
-                        section_type = match.group(1)
-                        section_num = match.group(2)
-                        section_text = match.group(3).strip()
-                        
-                        citations.append({
-                            "text": section_text,
-                            "type": "section",
-                            "section_number": section_num,
-                            "section_type": section_type.lower(),
-                            "relevance": 0.9
-                        })
-            
-            return citations
-            
-        except Exception as e:
-            print(f"LLM citation extraction failed: {e}")
-            return await self._extract_citations_regex(text)
-    
+        """Extract citations from text using LLM or regex fallback."""
+        if self.llm and self.prompt_manager:
+            try:
+                return await self._extract_citations_llm(text)
+            except Exception as e:
+                # Fallback to regex on LLM failure
+                return await self._extract_citations_regex(text)
+        return await self._extract_citations_regex(text)
+
+    async def _extract_citations_llm(self, text: str) -> List[Dict[str, Any]]:
+        """Extract citations using LLM."""
+        prompt = self.prompt_manager.format_prompt(
+            "citation_extraction",
+            language="vi",
+            text=text
+        )
+        
+        result = await self.llm.generate_completion([
+            {"role": "system", "content": "You are a citation extraction expert."},
+            {"role": "user", "content": prompt}
+        ])
+        
+        return self._parse_llm_citations(result)
+
+    def _parse_llm_citations(self, llm_response: str) -> List[Dict[str, Any]]:
+        """Parse citations from LLM response."""
+        citations = []
+        for line in llm_response.split("\n"):
+            if "Mục" in line or "Phần" in line or "Điều" in line:
+                match = re.search(
+                    r"(Mục|Phần|Điều)\s+(\d+(?:\.\d+)?):?\s*(.*)",
+                    line
+                )
+                if match:
+                    citations.append({
+                        "text": match.group(3).strip(),
+                        "type": "section",
+                        "section_number": match.group(2),
+                        "section_type": match.group(1).lower(),
+                        "relevance": 0.9
+                    })
+        return citations
+
     async def _extract_citations_regex(self, text: str) -> List[Dict[str, Any]]:
         """Extract citations using regex patterns."""
         citations = []
-        
-        # Match Vietnamese section patterns
         section_pattern = r'(?:Mục|Phần|Điều)\s+(\d+(?:\.\d+)?)\s*[:.]\s*([^.!?\n]+)'
-        matches = re.finditer(section_pattern, text, re.IGNORECASE)
         
-        for match in matches:
-            section_num = match.group(1)
-            section_text = match.group(2).strip()
-            
+        for match in re.finditer(section_pattern, text, re.IGNORECASE):
             citations.append({
-                "text": section_text,
+                "text": match.group(2).strip(),
                 "type": "section",
-                "section_number": section_num,
-                "section_type": "muc",  # Default to 'muc' for Vietnamese sections
+                "section_number": match.group(1),
+                "section_type": "muc",
                 "relevance": 0.85
             })
         
         return citations
-    
+
+    async def _create_citation(
+        self,
+        context: Dict[str, Any],
+        citation: Dict[str, Any],
+        workflow_run_id: int,
+        context_id: int
+    ) -> int:
+        """Create citation record and link to response."""
+        try:
+            # Create citation record
+            citation_id = await self.citation_repo.create_citation(
+                document_id=context["document_id"],
+                chunk_id=context.get("chunk_id"),
+                citation_text=citation["text"],
+                citation_type=citation["type"],
+                normalized_format=await self._normalize_citation(citation),
+                authority_level=await self._determine_authority(citation),
+                metadata={}
+            )
+            
+            # Link citation to response
+            await self.citation_repo.create_response_citation(
+                workflow_run_id,
+                citation_id,
+                context_id,
+                citation.get("relevance", 0.8)
+            )
+            
+            return citation_id
+            
+        except Exception as e:
+            raise AgentError(f"Failed to create citation: {str(e)}") from e
+
     async def _normalize_citation(self, citation: Dict[str, Any]) -> str:
         """Normalize citation format."""
         if citation["type"] == "section":
@@ -178,13 +219,12 @@ class CitationAgent(BaseAgent):
             )
             return f"{section_type} {citation['section_number']}: {citation['text']}"
         return citation["text"]
-    
+
     async def _determine_authority(self, citation: Dict[str, Any]) -> int:
-        """Determine citation relevance level."""
+        """Determine citation authority level."""
         if citation["type"] != "section":
             return 3  # Default for non-section citations
             
-        # Higher authority for main sections vs subsections
         section_num = citation["section_number"]
         if "." not in section_num:
             # Main sections have higher authority
@@ -195,5 +235,4 @@ class CitationAgent(BaseAgent):
                 return 4  # High for main sections and articles
             return 3  # Default for other main sections
         else:
-            # Subsections have lower authority
             return 2  # Lower for subsections

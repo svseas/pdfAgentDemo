@@ -1,205 +1,131 @@
 """Query analysis and decomposition agent."""
 import numpy as np
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.repositories.workflow_repository import (
-    SQLQueryRepository,
-    SQLContextRepository
+    AgentStepRepository,
+    QueryRepository,
+    ContextRepository
 )
+from src.repositories.document_repository import DocumentRepository
 from src.domain.stepback_agent import StepbackAgent
 from src.domain.embedding_generator import EmbeddingGenerator
+from src.domain.exceptions import AgentError
 from .base_agent import BaseAgent
 
 class QueryAnalyzerAgent(BaseAgent):
-    """Agent that analyzes queries and breaks them down into sub-queries."""
+    """Agent that analyzes queries and breaks them down into sub-queries.
     
-    def __init__(self, session: AsyncSession, llm=None, prompt_manager=None):
-        """Initialize agent with embedding generator."""
-        super().__init__(session, llm, prompt_manager)
-        self.embedding_generator = EmbeddingGenerator()
-        self.prompt_builder = prompt_manager if prompt_manager else None
+    This agent is responsible for:
+    - Analyzing query intent and structure
+    - Breaking down complex queries into sub-queries
+    - Finding relevant document summaries
+    - Using stepback prompting for enhanced analysis
     
+    Attributes:
+        embedding_generator: Generator for text embeddings
+        query_repo: Repository for query operations
+        context_repo: Repository for context operations
+        doc_repo: Repository for document operations
+    """
+    
+    def __init__(
+        self,
+        session: AsyncSession,
+        agent_step_repo: AgentStepRepository,
+        query_repo: QueryRepository,
+        context_repo: ContextRepository,
+        doc_repo: DocumentRepository,
+        embedding_generator: EmbeddingGenerator,
+        *args,
+        **kwargs
+    ):
+        """Initialize query analyzer agent.
+        
+        Args:
+            session: Database session
+            agent_step_repo: Repository for agent step logging
+            query_repo: Repository for query operations
+            context_repo: Repository for context operations
+            doc_repo: Repository for document operations
+            embedding_generator: Generator for text embeddings
+            *args, **kwargs: Additional arguments for BaseAgent
+        """
+        super().__init__(session, agent_step_repo, *args, **kwargs)
+        self.embedding_generator = embedding_generator
+        self.query_repo = query_repo
+        self.context_repo = context_repo
+        self.doc_repo = doc_repo
+
     def cosine_similarity(self, v1: List[float], v2: List[float]) -> float:
         """Calculate cosine similarity between two vectors."""
         v1_array = np.array(v1)
         v2_array = np.array(v2)
         return np.dot(v1_array, v2_array) / (np.linalg.norm(v1_array) * np.linalg.norm(v2_array))
 
-    async def get_all_document_ids(self) -> List[int]:
-        """Get all document IDs from the repository."""
-        from src.repositories.document_repository import DocumentRepository
-        doc_repo = DocumentRepository(self.session)
-        return await doc_repo.get_all_document_ids()
-
-    async def get_relevant_summaries(
-        self,
-        query_embedding: List[float],
-        top_k: int = 10
-    ) -> List[Tuple[Dict[str, Any], float]]:
-        """Get most relevant summaries across all documents for a query."""
-        context_repo = SQLContextRepository(self.session)
+    async def _process_impl(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Implementation of query analysis logic.
         
-        # Get all document IDs
-        document_ids = await self.get_all_document_ids()
-        
-        # Combine all summaries with embeddings from all documents
-        all_summaries = []
-        for doc_id in document_ids:
-            summaries = await context_repo.get_document_summaries(doc_id)
-            if summaries["final_summary"] and summaries["final_summary"]["embedding"]:
-                summary = summaries["final_summary"]
-                summary["document_id"] = doc_id
-                all_summaries.append(summary)
-            for summary in summaries["intermediate_summaries"]:
-                summary["document_id"] = doc_id
-                all_summaries.append(summary)
-            for summary in summaries["chunk_summaries"]:
-                summary["document_id"] = doc_id
-                all_summaries.append(summary)
-        
-        # Calculate similarities and sort
-        scored_summaries = []
-        for summary in all_summaries:
-            if summary["embedding"]:
-                similarity = self.cosine_similarity(query_embedding, summary["embedding"])
-                scored_summaries.append((summary, similarity))
+        Args:
+            input_data: Must contain:
+                - workflow_run_id: ID of current workflow run
+                - query_text: Text of query to analyze
+                - language: Language code (default: "vi")
                 
-        scored_summaries.sort(key=lambda x: x[1], reverse=True)
-        return scored_summaries[:top_k]
-
-    async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Process input data and return output."""
-        workflow_run_id = input_data.get("workflow_run_id")
-        query_text = input_data.get("query_text")
-        # Normalize language code
-        language = "vi" if input_data.get("language", "vi").lower() in ["vi", "vietnamese"] else "en"
-        
-        # Log step start
-        agent_step_id = await self.log_step(
-            workflow_run_id,
-            None,
-            input_data,
-            {},
-            "running"
-        )
-        
+        Returns:
+            Dict containing:
+                - original_query: Original query text
+                - sub_queries: List of generated sub-queries
+                - reasoning: Dict with analysis details
+                
+        Raises:
+            AgentError: If query analysis fails
+        """
         try:
-            query_repo = SQLQueryRepository(self.session)
-            context_repo = SQLContextRepository(self.session)
-            sub_queries = []
+            workflow_run_id = input_data.get("workflow_run_id")
+            query_text = input_data.get("query_text")
+            language = "vi" if input_data.get("language", "vi").lower() in ["vi", "vietnamese"] else "en"
             
-            # Initialize variables
+            if not query_text:
+                raise AgentError("No query text provided")
+            
+            # Get relevant summaries if LLM available
             relevant_summaries = []
             stepback_result = None
             decomposition_strategy = "template-based fallback"
-
+            
             if self.llm and self.prompt_manager:
-                # Generate query embedding
+                # Generate query embedding and get relevant summaries
                 query_embedding = await self.embedding_generator.generate_embedding(query_text)
-                
-                # Get relevant summaries from all documents
-                relevant_summaries = await self.get_relevant_summaries(
-                    query_embedding,
-                    top_k=10
-                )
+                relevant_summaries = await self._get_relevant_summaries(query_embedding)
                 decomposition_strategy = "LLM-based with summary context"
                 
-                # Build context from top summaries
-                context = "\n\n".join([
-                    f"Summary (score {score:.3f}):\n{summary['text']}"
-                    for summary, score in relevant_summaries
-                ])
-                
-                # Use stepback prompting for query analysis
-                stepback_agent = StepbackAgent(self.llm)
-                
-                # Get broader perspective using summaries as context
-                stepback_result = await stepback_agent.generate_stepback(
-                    context=context,
-                    query=query_text,
-                    language=language
+                # Generate sub-queries using LLM
+                sub_queries = await self._generate_llm_sub_queries(
+                    query_text,
+                    relevant_summaries,
+                    language,
+                    workflow_run_id,
+                    input_data.get("query_id")
                 )
-                
-                # Use top 5 summaries for sub-query generation
-                top_5_summaries = relevant_summaries[:5]
-                top_5_context = "\n\n".join([
-                    f"Summary (score {score:.3f}):\n{summary['text']}"
-                    for summary, score in top_5_summaries
-                ])
-                
-                # Use LLM with stepback insight for query decomposition
-                prompt = self.prompt_builder.format_prompt(
-                    "query_decomposition",
-                    language=language,
-                    query=query_text,
-                    context=top_5_context,
-                    stepback_analysis=stepback_result
-                )
-                
-                result = await self.llm.generate_completion([
-                    {"role": "system", "content": "You are a query analysis expert."},
-                    {"role": "user", "content": prompt}
-                ])
-                
-                # Parse sub-queries from LLM response
-                for line in result.split("\n"):
-                    if line.strip() and not line.startswith(("Based on", "Consider", "Note")):
-                        sub_query_id = await query_repo.create_sub_query(
-                            workflow_run_id,
-                            input_data.get("query_id"),
-                            line.strip()
-                        )
-                        
-                        sub_queries.append({
-                            "id": sub_query_id,
-                            "text": line.strip()
-                        })
-                
-                # Log used summaries as context results
-                for summary, score in relevant_summaries:
-                    await context_repo.create_context_result(
-                        agent_step_id=agent_step_id,
-                        document_id=summary["document_id"],
-                        chunk_id=None,
-                        summary_id=summary["id"],
-                        relevance_score=score,
-                        used_in_response=True
-                    )
             else:
                 # Fallback to template-based decomposition
-                templates_vi = [
-                    "Những định nghĩa và khái niệm chính liên quan đến: {query}",
-                    "Các thông tin quan trọng về: {query}",
-                    "Các luận điểm và dẫn chứng liên quan đến: {query}",
-                    "Các ví dụ và trường hợp áp dụng của: {query}",
-                    "Các quy định và hướng dẫn về: {query}"
-                ]
-                
-                templates_en = [
-                    "Key definitions and concepts related to: {query}",
-                    "Important information about: {query}",
-                    "Arguments and evidence regarding: {query}",
-                    "Examples and applications of: {query}",
-                    "Rules and guidelines about: {query}"
-                ]
-                
-                templates = templates_vi if language == "vi" else templates_en
-                
-                for template in templates:
-                    sub_query_text = template.format(query=query_text)
-                    sub_query_id = await query_repo.create_sub_query(
-                        workflow_run_id,
-                        input_data.get("query_id"),
-                        sub_query_text
-                    )
-                    
-                    sub_queries.append({
-                        "id": sub_query_id,
-                        "text": sub_query_text
-                    })
+                sub_queries = await self._generate_template_sub_queries(
+                    query_text,
+                    language,
+                    workflow_run_id,
+                    input_data.get("query_id")
+                )
             
-            output_data = {
+            # Store context results if summaries were used
+            if relevant_summaries:
+                await self._store_summary_contexts(
+                    input_data.get("agent_step_id"),  # Pass agent_step_id from input
+                    relevant_summaries
+                )
+            
+            return {
                 "original_query": query_text,
                 "sub_queries": sub_queries,
                 "reasoning": {
@@ -211,25 +137,245 @@ class QueryAnalyzerAgent(BaseAgent):
                             "document_id": summary["document_id"]
                         }
                         for summary, score in relevant_summaries
-                    ] if relevant_summaries else [],
-                    "stepback_analysis": stepback_result if stepback_result else "Using template-based decomposition due to LLM unavailability",
+                    ],
+                    "stepback_analysis": stepback_result if stepback_result else "Using template-based decomposition",
                     "decomposition_strategy": decomposition_strategy
                 }
             }
             
-            # Update step status
-            await self._update_step_status(
-                agent_step_id,
-                "success",
-                output_data
-            )
+        except Exception as e:
+            raise AgentError(f"Query analysis failed: {str(e)}") from e
+
+    async def _get_relevant_summaries(
+        self,
+        query_embedding: List[float],
+        top_k: int = 10
+    ) -> List[Tuple[Dict[str, Any], float]]:
+        """Get most relevant summaries for query.
+        
+        Args:
+            query_embedding: Query embedding vector
+            top_k: Number of summaries to return
             
-            return output_data
+        Returns:
+            List of (summary, score) tuples
+            
+        Raises:
+            AgentError: If summary retrieval fails
+        """
+        try:
+            # Get all document IDs
+            document_ids = await self.doc_repo.get_all_document_ids()
+            
+            # Get summaries from all documents
+            all_summaries = []
+            for doc_id in document_ids:
+                summaries = await self.context_repo.get_document_summaries(doc_id)
+                
+                # Add final summary if it exists
+                if summaries["final_summary"] and summaries["final_summary"]["embedding"]:
+                    summary = summaries["final_summary"]
+                    summary["document_id"] = doc_id
+                    all_summaries.append(summary)
+                
+                # Add intermediate and chunk summaries
+                for summary in summaries["intermediate_summaries"] + summaries["chunk_summaries"]:
+                    summary["document_id"] = doc_id
+                    all_summaries.append(summary)
+            
+            # Calculate similarities and sort
+            scored_summaries = []
+            for summary in all_summaries:
+                if summary["embedding"]:
+                    similarity = self.cosine_similarity(query_embedding, summary["embedding"])
+                    scored_summaries.append((summary, similarity))
+            
+            scored_summaries.sort(key=lambda x: x[1], reverse=True)
+            return scored_summaries[:top_k]
             
         except Exception as e:
-            await self._update_step_status(
-                agent_step_id,
-                "failed",
-                {"error": str(e)}
+            raise AgentError(f"Failed to get relevant summaries: {str(e)}") from e
+
+    async def _generate_llm_sub_queries(
+        self,
+        query_text: str,
+        relevant_summaries: List[Tuple[Dict[str, Any], float]],
+        language: str,
+        workflow_run_id: int,
+        original_query_id: Optional[int]
+    ) -> List[Dict[str, Any]]:
+        """Generate sub-queries using LLM.
+        
+        Args:
+            query_text: Original query text
+            relevant_summaries: List of relevant summaries
+            language: Language code
+            workflow_run_id: Current workflow run ID
+            original_query_id: Optional original query ID
+            
+        Returns:
+            List of generated sub-queries
+            
+        Raises:
+            AgentError: If sub-query generation fails
+        """
+        try:
+            # Use stepback prompting for query analysis
+            stepback_agent = StepbackAgent(self.llm)
+            
+            # Build context from top summaries
+            top_5_summaries = relevant_summaries[:5]
+            context = "\n\n".join([
+                f"Summary (score {score:.3f}):\n{summary['text']}"
+                for summary, score in top_5_summaries
+            ])
+            
+            # Get broader perspective using summaries
+            stepback_result = await stepback_agent.generate_stepback(
+                context=context,
+                query=query_text,
+                language=language
             )
-            raise
+            
+            # Generate sub-queries using stepback insight
+            prompt = self.prompt_manager.format_prompt(
+                "query_decomposition",
+                language=language,
+                query=query_text,
+                context=context,
+                stepback_analysis=stepback_result
+            )
+            
+            result = await self.llm.generate_completion([
+                {"role": "system", "content": "You are a query analysis expert."},
+                {"role": "user", "content": prompt}
+            ])
+            
+            return await self._create_sub_queries(
+                result.split("\n"),
+                workflow_run_id,
+                original_query_id
+            )
+            
+        except Exception as e:
+            raise AgentError(f"Failed to generate LLM sub-queries: {str(e)}") from e
+
+    async def _generate_template_sub_queries(
+        self,
+        query_text: str,
+        language: str,
+        workflow_run_id: int,
+        original_query_id: Optional[int]
+    ) -> List[Dict[str, Any]]:
+        """Generate sub-queries using templates.
+        
+        Args:
+            query_text: Original query text
+            language: Language code
+            workflow_run_id: Current workflow run ID
+            original_query_id: Optional original query ID
+            
+        Returns:
+            List of generated sub-queries
+            
+        Raises:
+            AgentError: If sub-query generation fails
+        """
+        try:
+            templates = {
+                "vi": [
+                    "Những định nghĩa và khái niệm chính liên quan đến: {query}",
+                    "Các thông tin quan trọng về: {query}",
+                    "Các luận điểm và dẫn chứng liên quan đến: {query}",
+                    "Các ví dụ và trường hợp áp dụng của: {query}",
+                    "Các quy định và hướng dẫn về: {query}"
+                ],
+                "en": [
+                    "Key definitions and concepts related to: {query}",
+                    "Important information about: {query}",
+                    "Arguments and evidence regarding: {query}",
+                    "Examples and applications of: {query}",
+                    "Rules and guidelines about: {query}"
+                ]
+            }
+            
+            sub_query_texts = [
+                template.format(query=query_text)
+                for template in templates["vi" if language == "vi" else "en"]
+            ]
+            
+            return await self._create_sub_queries(
+                sub_query_texts,
+                workflow_run_id,
+                original_query_id
+            )
+            
+        except Exception as e:
+            raise AgentError(f"Failed to generate template sub-queries: {str(e)}") from e
+
+    async def _create_sub_queries(
+        self,
+        sub_query_texts: List[str],
+        workflow_run_id: int,
+        original_query_id: Optional[int]
+    ) -> List[Dict[str, Any]]:
+        """Create sub-query records in database.
+        
+        Args:
+            sub_query_texts: List of sub-query texts
+            workflow_run_id: Current workflow run ID
+            original_query_id: Optional original query ID
+            
+        Returns:
+            List of created sub-queries
+            
+        Raises:
+            AgentError: If sub-query creation fails
+        """
+        try:
+            sub_queries = []
+            for text in sub_query_texts:
+                if text.strip() and not text.startswith(("Based on", "Consider", "Note")):
+                    sub_query_id = await self.query_repo.create_sub_query(
+                        workflow_run_id,
+                        original_query_id,
+                        text.strip()
+                    )
+                    sub_queries.append({
+                        "id": sub_query_id,
+                        "text": text.strip()
+                    })
+            return sub_queries
+            
+        except Exception as e:
+            raise AgentError(f"Failed to create sub-queries: {str(e)}") from e
+
+    async def _store_summary_contexts(
+        self,
+        agent_step_id: int,
+        relevant_summaries: List[Tuple[Dict[str, Any], float]]
+    ) -> None:
+        """Store used summaries as context results.
+        
+        Args:
+            agent_step_id: Current agent step ID
+            relevant_summaries: List of relevant summaries
+            
+        Raises:
+            AgentError: If context storage fails
+        """
+        try:
+            if not agent_step_id:
+                raise AgentError("No agent step ID provided for storing contexts")
+                
+            for summary, score in relevant_summaries:
+                await self.context_repo.create_context_result(
+                    agent_step_id=agent_step_id,
+                    document_id=summary["document_id"],
+                    chunk_id=None,
+                    summary_id=summary["id"],
+                    relevance_score=score,
+                    used_in_response=True
+                )
+        except Exception as e:
+            raise AgentError(f"Failed to store summary contexts: {str(e)}") from e

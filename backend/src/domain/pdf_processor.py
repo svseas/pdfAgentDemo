@@ -1,6 +1,6 @@
 """PDF processing implementation."""
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 import logging
 from unstructured.partition.pdf import partition_pdf
 from src.core.config import settings

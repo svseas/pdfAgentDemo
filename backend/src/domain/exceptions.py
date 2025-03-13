@@ -31,3 +31,18 @@ class ChunkingError(DomainError):
 class ValidationError(DomainError):
     """Raised when validation fails."""
     pass
+
+class AgentError(DomainError):
+    """Raised when agent processing fails.
+    
+    This exception is used by all agents in the system to indicate failures
+    during their processing steps. It can wrap other exceptions to provide
+    more context about where and why the failure occurred.
+    
+    Examples:
+        >>> try:
+        ...     result = await agent.process(data)
+        ... except AgentError as e:
+        ...     logger.error(f"Agent processing failed: {e}")
+    """
+    pass

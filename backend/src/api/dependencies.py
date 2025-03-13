@@ -10,6 +10,12 @@ from src.domain.embedding_generator import EmbeddingGenerator
 from src.domain.pdf_processor import PDFProcessor
 from src.domain.query_processor import QueryProcessor
 from src.repositories.document_repository import DocumentRepository
+from src.repositories.workflow_repository import (
+    SQLAgentStepRepository,
+    SQLContextRepository,
+    SQLQueryRepository,
+    SQLCitationRepository
+)
 from src.services.document_service import DocumentService
 from src.domain.agents.recursive_summarization_agent import RecursiveSummarizationAgent
 from src.domain.agents.query_analyzer_agent import QueryAnalyzerAgent
@@ -76,16 +82,46 @@ def get_prompt_manager() -> PromptTemplateInterface:
     from src.core.llm.prompts import PromptManager
     return PromptManager()
 
+# Repository dependencies
+async def get_agent_step_repository(
+    db: AsyncSession = Depends(get_db)
+) -> SQLAgentStepRepository:
+    """Get agent step repository instance."""
+    return SQLAgentStepRepository(db)
+
+async def get_context_repository(
+    db: AsyncSession = Depends(get_db)
+) -> SQLContextRepository:
+    """Get context repository instance."""
+    return SQLContextRepository(db)
+
+async def get_query_repository(
+    db: AsyncSession = Depends(get_db)
+) -> SQLQueryRepository:
+    """Get query repository instance."""
+    return SQLQueryRepository(db)
+
+async def get_citation_repository(
+    db: AsyncSession = Depends(get_db)
+) -> SQLCitationRepository:
+    """Get citation repository instance."""
+    return SQLCitationRepository(db)
+
+# Agent dependencies
 async def get_summarization_agent(
     session: AsyncSession = Depends(get_db),
-    llm_service: LLMService = Depends(get_llm_service),
+    agent_step_repo: SQLAgentStepRepository = Depends(get_agent_step_repository),
+    context_repo: SQLContextRepository = Depends(get_context_repository),
     pdf_processor: PDFProcessor = Depends(get_pdf_processor),
-    prompt_manager: PromptTemplateInterface = Depends(get_prompt_manager),
-    embedding_generator: EmbeddingGenerator = Depends(get_embedding_generator)
+    embedding_generator: EmbeddingGenerator = Depends(get_embedding_generator),
+    llm_service: LLMService = Depends(get_llm_service),
+    prompt_manager: PromptTemplateInterface = Depends(get_prompt_manager)
 ) -> RecursiveSummarizationAgent:
     """Get summarization agent instance."""
     return RecursiveSummarizationAgent(
         session=session,
+        agent_step_repo=agent_step_repo,
+        context_repo=context_repo,
         pdf_processor=pdf_processor,
         embedding_generator=embedding_generator,
         llm=llm_service,
@@ -94,32 +130,56 @@ async def get_summarization_agent(
 
 async def get_query_analyzer_agent(
     session: AsyncSession = Depends(get_db),
+    agent_step_repo: SQLAgentStepRepository = Depends(get_agent_step_repository),
+    query_repo: SQLQueryRepository = Depends(get_query_repository),
+    context_repo: SQLContextRepository = Depends(get_context_repository),
+    doc_repo: DocumentRepository = Depends(get_document_repository),
+    embedding_generator: EmbeddingGenerator = Depends(get_embedding_generator),
     llm_service: LLMService = Depends(get_llm_service),
     prompt_manager: PromptTemplateInterface = Depends(get_prompt_manager)
 ) -> QueryAnalyzerAgent:
     """Get query analyzer agent instance."""
     return QueryAnalyzerAgent(
         session=session,
+        agent_step_repo=agent_step_repo,
+        query_repo=query_repo,
+        context_repo=context_repo,
+        doc_repo=doc_repo,
+        embedding_generator=embedding_generator,
         llm=llm_service,
         prompt_manager=prompt_manager
     )
 
 async def get_citation_agent(
     session: AsyncSession = Depends(get_db),
-    llm_service: LLMService = Depends(get_llm_service)
+    agent_step_repo: SQLAgentStepRepository = Depends(get_agent_step_repository),
+    citation_repo: SQLCitationRepository = Depends(get_citation_repository),
+    context_repo: SQLContextRepository = Depends(get_context_repository),
+    llm_service: LLMService = Depends(get_llm_service),
+    prompt_manager: PromptTemplateInterface = Depends(get_prompt_manager)
 ) -> CitationAgent:
     """Get citation agent instance."""
     return CitationAgent(
         session=session,
-        llm=llm_service
+        agent_step_repo=agent_step_repo,
+        citation_repo=citation_repo,
+        context_repo=context_repo,
+        llm=llm_service,
+        prompt_manager=prompt_manager
     )
 
 async def get_query_synthesizer_agent(
     session: AsyncSession = Depends(get_db),
-    llm_service: LLMService = Depends(get_llm_service)
+    agent_step_repo: SQLAgentStepRepository = Depends(get_agent_step_repository),
+    context_repo: SQLContextRepository = Depends(get_context_repository),
+    llm_service: LLMService = Depends(get_llm_service),
+    prompt_manager: PromptTemplateInterface = Depends(get_prompt_manager)
 ) -> QuerySynthesizerAgent:
     """Get query synthesizer agent instance."""
     return QuerySynthesizerAgent(
         session=session,
-        llm=llm_service
+        agent_step_repo=agent_step_repo,
+        context_repo=context_repo,
+        llm=llm_service,
+        prompt_manager=prompt_manager
     )

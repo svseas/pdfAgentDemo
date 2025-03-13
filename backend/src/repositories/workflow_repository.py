@@ -5,16 +5,14 @@ from typing import Dict, Any, Optional, List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger(__name__)
-
-from ..domain.interfaces import (
+from backend.src.domain.interfaces import (
     WorkflowRepository,
     QueryRepository,
     AgentStepRepository,
     ContextRepository,
     CitationRepository
 )
-from ..models.workflow import (
+from backend.src.models.workflow import (
     WorkflowRun,
     UserQuery,
     SubQuery,
@@ -25,6 +23,8 @@ from ..models.workflow import (
     DocumentSummary
 )
 from .document_repository import DocumentRepository
+
+logger = logging.getLogger(__name__)
 
 class SQLWorkflowRepository(WorkflowRepository):
     """SQLAlchemy implementation of WorkflowRepository."""
