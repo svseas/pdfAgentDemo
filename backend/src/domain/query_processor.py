@@ -1,81 +1,46 @@
-from typing import List, Dict, Any
+"""Query processing implementation."""
+from typing import List, Dict, Any, Optional
 import numpy as np
-import httpx
 import logging
-import re
-import os
 from pathlib import Path
-from src.domain.embedding_generator import EmbeddingGenerator
+import os
 from src.core.config import settings
-from src.domain.grag import GRAGService
-from src.domain.stepback_agent import StepbackAgent
+from src.core.llm_service import LLMService
+from src.domain.interfaces import QueryProcessorInterface, LLMInterface, EmbeddingGeneratorInterface
+from src.domain.exceptions import QueryProcessingError, LLMError
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)  # Set to DEBUG for more verbose logging
 
-class QueryProcessor:
-    def __init__(self, embedding_generator: EmbeddingGenerator):
-        self.embedding_generator = embedding_generator
-        self.llm_url = f"{settings.LMSTUDIO_BASE_URL}/chat/completions"
-        self.grag_service = None  # Lazy initialization
-        self.stepback_agent = StepbackAgent()
-        logger.info("QueryProcessor initialized")
-        
-    def _initialize_grag(self):
-        """Initialize GRAG service for reranking"""
-        try:
-            from src.domain.grag.service import GRAGService
-            
-            # Use local model path
-            cwd = os.getcwd()
-            model_path = Path(cwd) / "models" / "amrbart"
-            logger.info(f"Current working directory: {cwd}")
-            logger.info(f"Looking for model at: {model_path}")
-            logger.info(f"Model path exists: {model_path.exists()}")
-            if not model_path.exists():
-                logger.error(f"AMR model not found at {model_path}. Please run python backend/src/scripts/download_amr_model.py first")
-                return None
-                
-            self.grag_service = GRAGService(
-                embedding_model_name="BAAI/bge-small-en",  # Same model as our embedding generator
-                amr_model_name=str(model_path)  # Convert Path to string
-            )
-            logger.info("GRAG service initialized successfully")
-            return self.grag_service
-        except Exception as e:
-            logger.error(f"Failed to initialize GRAG service: {e}")
-            self.grag_service = None
-            return None
-        
-    def _calculate_similarity(self, query_embedding: np.ndarray, doc_embedding: np.ndarray, chunk_index: int, chunk_content: str) -> float:
+class SimilarityCalculator:
+    """Calculate similarity between embeddings."""
+    
+    @staticmethod
+    def calculate(
+        query_embedding: np.ndarray,
+        doc_embedding: np.ndarray,
+        chunk_index: int
+    ) -> float:
         """
         Calculate similarity score between query and document embeddings.
-        Applies position bias and content relevance boost.
         
         Args:
             query_embedding: Query embedding vector
-            doc_embedding: Document chunk embedding vector
-            chunk_index: Position of the chunk in the document
-            chunk_content: Text content of the chunk
+            doc_embedding: Document embedding vector
+            chunk_index: Index of the chunk for position bias
             
         Returns:
-            Final similarity score
+            Similarity score
         """
         try:
-            # Convert to numpy arrays if they aren't already
+            # Convert to numpy arrays if needed
             if not isinstance(query_embedding, np.ndarray):
                 query_embedding = np.array(query_embedding, dtype=np.float32)
             if not isinstance(doc_embedding, np.ndarray):
                 doc_embedding = np.array(doc_embedding, dtype=np.float32)
             
-            # Ensure arrays are 1-dimensional and have the same shape
+            # Ensure arrays are 1-dimensional
             query_embedding = query_embedding.flatten()
             doc_embedding = doc_embedding.flatten()
-            
-            # Log shapes for debugging
-            logger.debug(f"Query embedding shape: {query_embedding.shape}")
-            logger.debug(f"Doc embedding shape: {doc_embedding.shape}")
-            logger.debug(f"Doc embedding type: {type(doc_embedding)}")
             
             # Check if shapes match
             if query_embedding.shape[0] != doc_embedding.shape[0]:
@@ -86,223 +51,244 @@ class QueryProcessor:
             query_norm = float(np.linalg.norm(query_embedding))
             doc_norm = float(np.linalg.norm(doc_embedding))
             
-            if query_norm < 1e-10 or doc_norm < 1e-10:  # Check for near-zero norms
+            if query_norm < 1e-10 or doc_norm < 1e-10:
                 return 0.0
                 
             cosine_sim = float(np.dot(query_embedding, doc_embedding)) / (query_norm * doc_norm)
             
-            # Apply position bias (higher weight for earlier chunks)
-            position_weight = 1.0 / (1.0 + 0.1 * chunk_index)  # Decay factor of 0.1
+            # Apply position bias
+            position_weight = 1.0 / (1.0 + 0.1 * chunk_index)
             
-            # Apply position bias only
-            final_score = cosine_sim * position_weight
-            
-            return final_score
+            return cosine_sim * position_weight
             
         except Exception as e:
             logger.error(f"Error calculating similarity: {str(e)}")
-            logger.debug(f"Query embedding shape: {query_embedding.shape}")
-            logger.debug(f"Doc embedding shape: {doc_embedding.shape}")
-            logger.debug(f"Doc embedding type: {type(doc_embedding)}")
-            return 0.0  # Return 0 similarity on error
+            return 0.0
 
-    def get_relevant_chunks(
-        self, 
-        query: str, 
-        doc_chunks: List[Dict[str, Any]], 
-        top_k: int = None,
-        use_grag: bool = False
+class GRAGReranker:
+    """GRAG-based document reranking."""
+    
+    def __init__(self):
+        """Initialize GRAG reranker."""
+        self.service = None
+        
+    def initialize(self) -> bool:
+        """Initialize GRAG service."""
+        try:
+            from src.domain.grag.service import GRAGService
+            
+            # Use local model path
+            cwd = os.getcwd()
+            model_path = Path(cwd) / "models" / "amrbart"
+            logger.info(f"Looking for model at: {model_path}")
+            
+            if not model_path.exists():
+                logger.error(f"AMR model not found at {model_path}")
+                return False
+                
+            self.service = GRAGService(
+                embedding_model_name=settings.EMBEDDING_MODEL,
+                amr_model_name=str(model_path)
+            )
+            logger.info("GRAG service initialized successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize GRAG service: {e}")
+            return False
+            
+    def rerank(
+        self,
+        query: str,
+        documents: List[Dict[str, Any]],
+        top_k: int
     ) -> List[Dict[str, Any]]:
         """
-        Retrieve the most relevant document chunks for a given query.
+        Rerank documents using GRAG.
         
         Args:
-            query: The user's question
-            doc_chunks: List of document chunks with their embeddings
-            top_k: Number of most relevant chunks to return (defaults to settings.TOP_K_MATCHES)
-            use_grag: Whether to use GRAG for reranking (defaults to False). Set to True to enable graph-based reranking.
-        
+            query: User query
+            documents: List of document chunks
+            top_k: Number of top results to return
+            
         Returns:
-            List of the most relevant document chunks
+            Reranked document chunks
+        """
+        if not self.service:
+            if not self.initialize():
+                return documents[:top_k]
+                
+        try:
+            original_order = [doc["id"] for doc in documents]
+            
+            reranked_docs = self.service.rerank(
+                question=query,
+                documents=documents,
+                top_k=top_k
+            )
+            
+            new_order = [doc["id"] for doc in reranked_docs]
+            logger.info(f"GRAG reranking: {original_order} -> {new_order}")
+            
+            return reranked_docs
+            
+        except Exception as e:
+            logger.error(f"GRAG reranking error: {e}")
+            return documents[:top_k]
+
+class QueryProcessor(QueryProcessorInterface):
+    """Process queries and generate responses."""
+    
+    def __init__(
+        self,
+        embedding_generator: EmbeddingGeneratorInterface,
+        llm_service: LLMInterface,
+        top_k: int = 3,
+        use_grag: bool = False
+    ):
+        """
+        Initialize query processor.
+        
+        Args:
+            embedding_generator: Service for generating embeddings
+            llm_service: Service for LLM interactions
+            top_k: Number of top matches to return
+            use_grag: Whether to use GRAG reranking
+        """
+        self.embedding_generator = embedding_generator
+        self.llm_service = llm_service
+        self.top_k = top_k
+        self.use_grag = use_grag
+        self.similarity_calculator = SimilarityCalculator()
+        self.reranker = GRAGReranker() if use_grag else None
+        
+    def get_relevant_chunks(
+        self,
+        query: str,
+        doc_chunks: List[Dict[str, Any]],
+        top_k: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get most relevant document chunks for query.
+        
+        Args:
+            query: User query
+            doc_chunks: List of document chunks with embeddings
+            top_k: Optional override for number of results
+            
+        Returns:
+            List of relevant chunks
+            
+        Raises:
+            QueryProcessingError: If processing fails
         """
         if top_k is None:
-            top_k = settings.TOP_K_MATCHES
+            top_k = self.top_k
 
-        logger.info(f"Processing query: {query}")
-        logger.info(f"Total chunks to process: {len(doc_chunks)}")
-        logger.info(f"GRAG reranking enabled: {use_grag}")
+        try:
+            logger.info(f"Processing query: {query}")
+            logger.info(f"Total chunks: {len(doc_chunks)}")
             
-        query_embedding = self.embedding_generator.generate_embedding(query)
-        
-        # Calculate similarities with content boost
-        chunk_similarities = []
-        for i, chunk in enumerate(doc_chunks):
-            try:
-                if not chunk.get("embedding"):
-                    logger.warning(f"Chunk {i} has no embedding")
-                    continue
-                
-                # Convert embedding to numpy array if it's a list
-                doc_embedding = chunk["embedding"]
-                if isinstance(doc_embedding, list):
-                    doc_embedding = np.array(doc_embedding, dtype=np.float32)
-                elif isinstance(doc_embedding, np.ndarray):
-                    doc_embedding = doc_embedding.astype(np.float32)
+            # Generate query embedding
+            query_embedding = self.embedding_generator.generate_embedding(query)
+            
+            # Calculate similarities
+            chunk_similarities = []
+            for i, chunk in enumerate(doc_chunks):
+                try:
+                    if not chunk.get("embedding"):
+                        logger.warning(f"Chunk {i} has no embedding")
+                        continue
                     
-                similarity = self._calculate_similarity(
-                    query_embedding,
-                    doc_embedding,
-                    i,  # Pass chunk index
-                    chunk["content"]  # Pass content for boosting
-                )
-                
-                if similarity > 0:  # Only include non-zero similarities
-                    chunk_similarities.append((chunk, similarity, i))
-                    logger.debug(f"Initial similarity for chunk {i}: {similarity}")
-            except Exception as e:
-                logger.error(f"Error calculating similarity for chunk {i}: {str(e)}")
-                continue
-        
-        # Sort by similarity score
-        chunk_similarities.sort(key=lambda x: x[1], reverse=True)
-        
-        # Take top k chunks and sort by position
-        top_chunks = chunk_similarities[:top_k] if chunk_similarities else []
-        top_chunks.sort(key=lambda x: x[2])  # Sort by original position
-        
-        result_chunks = [chunk for chunk, sim, _ in top_chunks]
-        logger.info(f"Selected {len(result_chunks)} chunks after initial ranking")
-        logger.info(f"Initial top similarities: {[sim for _, sim, _ in top_chunks[:3]]}")
-
-        # Apply GRAG reranking if enabled
-        if use_grag and len(result_chunks) > 1:
-            try:
-                if self.grag_service is None:
-                    logger.info("GRAG service not initialized, initializing now...")
-                    self._initialize_grag()
-                
-                if self.grag_service is not None:
-                    logger.info("Starting GRAG reranking...")
-                    
-                    # Store original order for logging
-                    original_order = [chunk["id"] for chunk in result_chunks]
-                    
-                    result_chunks = self.grag_service.rerank(
-                        question=query,
-                        documents=result_chunks,
-                        top_k=top_k
+                    similarity = self.similarity_calculator.calculate(
+                        query_embedding,
+                        chunk["embedding"],
+                        i
                     )
                     
-                    # Log reranking results
-                    new_order = [chunk["id"] for chunk in result_chunks]
-                    logger.info(f"GRAG reranking complete. Order changed: {original_order} -> {new_order}")
-                else:
-                    logger.warning("GRAG service initialization failed, using original ranking")
-            except Exception as e:
-                logger.error(f"Error during GRAG reranking: {e}")
-                logger.info("Falling back to similarity-based ranking")
-                # Fall back to similarity-based ranking
-                pass
-        
-        return result_chunks
-
+                    if similarity > 0:
+                        chunk_similarities.append((chunk, similarity, i))
+                        logger.debug(f"Similarity for chunk {i}: {similarity}")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing chunk {i}: {str(e)}")
+                    continue
+            
+            # Sort by similarity
+            chunk_similarities.sort(key=lambda x: x[1], reverse=True)
+            
+            # Take top k and sort by position
+            top_chunks = chunk_similarities[:top_k] if chunk_similarities else []
+            top_chunks.sort(key=lambda x: x[2])
+            
+            result_chunks = [chunk for chunk, _, _ in top_chunks]
+            logger.info(f"Selected {len(result_chunks)} chunks")
+            
+            # Apply GRAG reranking if enabled
+            if self.use_grag and len(result_chunks) > 1:
+                result_chunks = self.reranker.rerank(query, result_chunks, top_k)
+            
+            return result_chunks
+            
+        except Exception as e:
+            raise QueryProcessingError(f"Failed to get relevant chunks: {str(e)}")
+            
     async def generate_response(
         self,
         query: str,
         relevant_chunks: List[Dict[str, Any]],
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        language: str = "vi"
     ) -> str:
         """
-        Generate a response using LMStudio based on the query and relevant document chunks.
+        Generate response using relevant chunks.
         
         Args:
-            query: The user's question
-            relevant_chunks: List of relevant document chunks
-            temperature: Temperature parameter for response generation
+            query: User query
+            relevant_chunks: Relevant document chunks
+            temperature: LLM temperature
+            language: Response language
             
         Returns:
-            Generated response from the LLM
+            Generated response
+            
+        Raises:
+            QueryProcessingError: If generation fails
         """
-        # Construct context from relevant chunks
-        context = "\n\n".join([chunk["content"] for chunk in relevant_chunks])
-        logger.info(f"Generated context length: {len(context)}")
-        logger.info(f"Number of chunks used: {len(relevant_chunks)}")
-        
-        # Construct system message
-        system_message = (
-            "Bạn là một trợ lý AI chuyên nghiệp, giúp người dùng hiểu nội dung văn bản. "
-            "Khi trả lời câu hỏi, hãy:\n"
-            "1. Tập trung vào thông tin được hỏi\n"
-            "2. Trích dẫn các con số cụ thể nếu có\n"
-            "3. Liệt kê đầy đủ các đối tượng được đề cập\n"
-            "4. Sắp xếp thông tin một cách logic\n"
-            "5. Sử dụng ngôn ngữ rõ ràng, chính xác\n\n"
-            "Nếu văn bản không có thông tin cần thiết, hãy nêu rõ điều này."
-        )
-        
-        # Construct user message with context
-        user_message = f"""Nội dung văn bản:
+        try:
+            # Build context from chunks
+            context = "\n\n".join([chunk["content"] for chunk in relevant_chunks])
+            logger.info(f"Context length: {len(context)}")
+            logger.info(f"Chunks used: {len(relevant_chunks)}")
+            
+            # Get system prompt
+            system_message = self.llm_service.get_prompt("system", language)
+            
+            # Build user message
+            user_message = f"""Nội dung văn bản:
 
 {context}
 
 Yêu cầu: {query}
 
-Hãy trả lời dựa trên nội dung văn bản được cung cấp. Nếu nội dung không đủ thông tin để trả lời chính xác, hãy nêu rõ điều này."""
+Hãy trả lời dựa trên nội dung văn bản được cung cấp. Nếu nội dung không đủ thông tin để trả lời chính xác, hãy nêu rõ điều này.""" if language == "vi" else f"""Document content:
 
-        # Prepare the request payload to match working curl command exactly
-        payload = {
-            "model": "llama3-docchat-1.0-8b-i1",  # Hardcode model name for testing
-            "messages": [
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": user_message}
-            ],
-            "temperature": temperature,
-            "max_tokens": -1,
-            "stream": False
-        }
-        
-        # Log the constructed payload
-        logger.debug(f"Constructed payload: {payload}")
+{context}
 
-        # Make request to LMStudio
-        async with httpx.AsyncClient(timeout=settings.LMSTUDIO_TIMEOUT) as client:
-            try:
-                # Log request details for debugging
-                logger.debug(f"Making request to URL: {self.llm_url}")
-                logger.debug(f"Request payload: {payload}")
-                
-                # Make request with exact same structure as working curl command
-                response = await client.post(
-                    self.llm_url,
-                    json=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Accept": "application/json"
-                    }
-                )
-                
-                # Log response details
-                logger.debug(f"Response status: {response.status_code}")
-                logger.debug(f"Response headers: {response.headers}")
-                
-                response.raise_for_status()
-                response_data = response.json()
-                logger.debug(f"Response data: {response_data}")
-                
-                if "choices" not in response_data:
-                    logger.error(f"Unexpected response format: {response_data}")
-                    raise Exception(f"Unexpected response format: {response_data}")
-                
-                initial_answer = response_data["choices"][0]["message"]["content"]
-                
-                # Enhance answer using stepback prompting
-                enhanced_answer = await self.stepback_agent.enhance_answer(
-                    context=context,
-                    query=query,
-                    initial_answer=initial_answer
-                )
-                
-                return enhanced_answer
-            except httpx.RequestError as e:
-                logger.error(f"Error calling LMStudio API: {str(e)}")
-                raise Exception(f"Error generating response from LLM: {str(e)}")
+Question: {query}
+
+Please answer based on the provided document content. If the content lacks sufficient information for an accurate answer, please clearly state this."""
+            
+            # Generate response
+            response = await self.llm_service.generate_completion(
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_message}
+                ],
+                temperature=temperature
+            )
+            
+            return response
+            
+        except Exception as e:
+            raise QueryProcessingError(f"Failed to generate response: {str(e)}")

@@ -1,121 +1,132 @@
+"""PDF processing implementation."""
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 import logging
 from unstructured.partition.pdf import partition_pdf
 from src.core.config import settings
-from src.domain.semantic_text_splitter import TextSplitter
+from src.domain.interfaces import DocumentProcessorInterface, TextSplitterInterface
+from src.domain.exceptions import DocumentProcessingError
+from src.domain.semantic_text_splitter import SemanticTextSplitter
 from src.domain.agentic_chunker import AgenticChunker
 
 logger = logging.getLogger(__name__)
 
-class PDFProcessor:
-    """Domain service for PDF processing"""
-
-    @staticmethod
-    def _split_text_semantic(text: str, chunk_size: int, overlap: int) -> List[str]:
+class PDFProcessor(DocumentProcessorInterface):
+    """Process PDF documents into text chunks."""
+    
+    def __init__(
+        self,
+        chunking_method: str = "semantic",
+        chunk_size: int = 1500,
+        chunk_overlap: int = 150,
+        language: str = "vietnamese"
+    ):
         """
-        Split text into chunks with overlap using semantic text splitting.
+        Initialize PDF processor.
         
         Args:
-            text: Text to split
+            chunking_method: Method to use for text chunking ("semantic" or "agentic")
             chunk_size: Maximum size of each chunk
-            overlap: Number of characters to overlap between chunks
-            
-        Returns:
-            List of text chunks
+            chunk_overlap: Number of characters to overlap between chunks
+            language: Document language for agentic chunking
         """
-        # Initialize semantic text splitter with appropriate parameters
-        splitter = TextSplitter(
+        self.chunking_method = chunking_method
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.language = language
+        
+        # Initialize text splitters
+        self.semantic_splitter = SemanticTextSplitter(
             max_characters=chunk_size,
             semantic_units=["paragraph", "sentence"],
             break_mode="sentence",
-            flex=overlap / chunk_size  # Convert overlap to flex ratio
+            flex=chunk_overlap / chunk_size
         )
         
-        return splitter.chunks(text)
-
-    @staticmethod
-    def _split_text_agentic(text: str) -> List[str]:
+        self.agentic_splitter = None  # Lazy initialization
+        
+    def _get_agentic_splitter(self) -> TextSplitterInterface:
+        """Get or create agentic splitter."""
+        if self.agentic_splitter is None:
+            self.agentic_splitter = AgenticChunker(
+                llm_endpoint=settings.LMSTUDIO_BASE_URL,
+                model=settings.LMSTUDIO_MODEL,
+                language=self.language
+            )
+        return self.agentic_splitter
+        
+    def extract_text(self, file_path: str) -> str:
         """
-        Split text into chunks using agentic chunking for legal documents.
+        Extract text from PDF file.
         
         Args:
-            text: Text to split
+            file_path: Path to PDF file
+            
+        Returns:
+            Extracted text
+            
+        Raises:
+            DocumentProcessingError: If extraction fails
+        """
+        path = Path(file_path)
+        
+        try:
+            if not path.exists():
+                raise DocumentProcessingError(f"File not found: {path}")
+                
+            if path.suffix.lower() != '.pdf':
+                raise DocumentProcessingError(f"Not a PDF file: {path}")
+                
+            logger.info(f"Processing PDF file: {path}")
+            
+            # Extract text using unstructured
+            elements = partition_pdf(filename=str(path))
+            full_text = " ".join(str(element) for element in elements if str(element).strip())
+            
+            logger.info(f"Extracted {len(full_text)} characters of text")
+            return full_text
+            
+        except Exception as e:
+            raise DocumentProcessingError(f"Failed to extract text from PDF: {str(e)}")
+            
+    def process_text(self, text: str) -> List[str]:
+        """
+        Process text into chunks.
+        
+        Args:
+            text: Text to process
             
         Returns:
             List of text chunks
+            
+        Raises:
+            DocumentProcessingError: If processing fails
         """
         try:
-            chunker = AgenticChunker(
-                llm_endpoint=settings.LMSTUDIO_BASE_URL,
-                model=settings.LMSTUDIO_MODEL,
-                language=settings.AGENTIC_CHUNKING_LANGUAGE
-            )
+            # Choose chunking method
+            if self.chunking_method == "agentic":
+                logger.info("Using agentic chunking")
+                splitter = self._get_agentic_splitter()
+            else:
+                logger.info("Using semantic chunking")
+                splitter = self.semantic_splitter
+                
+            # Split text into chunks
+            chunks = splitter.split(text)
             
-            logger.info("Using agentic chunking for legal documents")
-            chunks = chunker.process_text(text)
-            
-            if not chunks:
-                logger.warning("Agentic chunking returned no chunks, falling back to semantic chunking")
-                return PDFProcessor._split_text_semantic(
-                    text,
-                    settings.CHUNK_SIZE,
-                    settings.CHUNK_OVERLAP
-                )
+            # Log chunk information
+            logger.info(f"Created {len(chunks)} chunks")
+            for i, chunk in enumerate(chunks[:3]):  # Log first 3 chunks
+                logger.info(f"Chunk {i} (length {len(chunk)}): {chunk[:100]}...")
                 
             return chunks
             
         except Exception as e:
-            logger.error(f"Agentic chunking failed: {str(e)}, falling back to semantic chunking")
-            return PDFProcessor._split_text_semantic(
-                text,
-                settings.CHUNK_SIZE,
-                settings.CHUNK_OVERLAP
-            )
-
-    @staticmethod
-    def extract_text_chunks(file_path: Path) -> List[str]:
-        """
-        Extract text chunks from a PDF file.
-        
-        Args:
-            file_path: Path to the PDF file
+            logger.error(f"Text processing failed: {str(e)}")
             
-        Returns:
-            List of text chunks extracted from the PDF
-            
-        Raises:
-            ValueError: If file doesn't exist or isn't a PDF
-        """
-        if not file_path.exists():
-            raise ValueError(f"File not found: {file_path}")
-            
-        if file_path.suffix.lower() != '.pdf':
-            raise ValueError(f"Not a PDF file: {file_path}")
-            
-        logger.info(f"Processing PDF file: {file_path}")
-            
-        # Extract text using unstructured
-        elements = partition_pdf(filename=str(file_path))
-        
-        # Join elements into a single text
-        full_text = " ".join(str(element) for element in elements if str(element).strip())
-        
-        logger.info(f"Extracted {len(full_text)} characters of text")
-        
-        # Choose chunking method based on settings
-        if settings.CHUNKING_METHOD == "agentic":
-            chunks = PDFProcessor._split_text_agentic(full_text)
-        else:
-            logger.info("Using semantic text splitting")
-            chunks = PDFProcessor._split_text_semantic(
-                full_text,
-                settings.CHUNK_SIZE,
-                settings.CHUNK_OVERLAP
-            )
-        
-        logger.info(f"Created {len(chunks)} chunks")
-        for i, chunk in enumerate(chunks[:3]):  # Log first 3 chunks
-            logger.info(f"Chunk {i} (length {len(chunk)}): {chunk[:100]}...")
-        
-        return chunks
+            # Fallback to semantic chunking if agentic fails
+            if self.chunking_method == "agentic":
+                logger.info("Falling back to semantic chunking")
+                return self.semantic_splitter.split(text)
+            else:
+                raise DocumentProcessingError(f"Failed to process text: {str(e)}")

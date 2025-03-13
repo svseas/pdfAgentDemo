@@ -11,7 +11,13 @@ class Settings(BaseSettings):
     # CORS Origins
     BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
 
-    # LM Studio Settings
+    # LLM Provider Settings
+    LLM_PROVIDER: str = Field(
+        default="lmstudio",
+        description="LLM provider to use (lmstudio or openrouter)"
+    )
+    
+    # LMStudio settings
     LMSTUDIO_BASE_URL: str = Field(
         default="http://localhost:1234/v1",
         description="LM Studio API base URL"
@@ -25,12 +31,45 @@ class Settings(BaseSettings):
         description="Timeout for LM Studio API requests"
     )
 
+    # OpenRouter settings
+    OPENROUTER_BASE_URL: str = Field(
+        default="https://openrouter.ai/api/v1",  # Correct base URL
+        description="OpenRouter API base URL"
+    )
+    OPENROUTER_API_KEY: str = Field(
+        default="",
+        description="OpenRouter API key"
+    )
+    OPENROUTER_MODEL: str = Field(
+        default="qwen/qwq-32b:free",  # Updated to correct model ID
+        description="OpenRouter model to use"
+    )
+    OPENROUTER_TIMEOUT: float = Field(
+        default=30.0,
+        description="Timeout for OpenRouter API requests"
+    )
+
     # Database Settings
-    POSTGRES_HOST: str = Field(default="localhost", description="PostgreSQL host")
-    POSTGRES_PORT: str = Field(default="5432", description="PostgreSQL port")
-    POSTGRES_USER: str = Field(..., description="PostgreSQL user")
-    POSTGRES_PASSWORD: str = Field(..., description="PostgreSQL password")
-    POSTGRES_DB: str = Field(default="pdf_chat", description="PostgreSQL database name")
+    POSTGRES_HOST: str = Field(
+        default="localhost",
+        description="PostgreSQL host"
+    )
+    POSTGRES_PORT: str = Field(
+        default="5432",
+        description="PostgreSQL port"
+    )
+    POSTGRES_USER: str = Field(
+        default="postgres",
+        description="PostgreSQL user"
+    )
+    POSTGRES_PASSWORD: str = Field(
+        default="postgres",
+        description="PostgreSQL password"
+    )
+    POSTGRES_DB: str = Field(
+        default="pdf_chat",
+        description="PostgreSQL database name"
+    )
     
     # Construct database URL
     @property
@@ -41,6 +80,10 @@ class Settings(BaseSettings):
     EMBEDDING_DIMENSION: int = Field(
         default=768,
         description="Dimension of text embeddings"
+    )
+    EMBEDDING_MODEL: str = Field(
+        default="BAAI/bge-small-en",
+        description="Model to use for embeddings"
     )
     CHUNK_SIZE: int = Field(
         default=500,
@@ -78,6 +121,27 @@ class Settings(BaseSettings):
         default=0.0,  # No threshold to get all chunks
         description="Minimum similarity score for context retrieval"
     )
+
+    # Prompts
+    SYSTEM_PROMPT_VI: str = """Bạn là một trợ lý AI chuyên nghiệp, giúp người dùng hiểu nội dung văn bản. 
+Khi trả lời câu hỏi, hãy:
+1. Tập trung vào thông tin được hỏi
+2. Trích dẫn các con số cụ thể nếu có
+3. Liệt kê đầy đủ các đối tượng được đề cập
+4. Sắp xếp thông tin một cách logic
+5. Sử dụng ngôn ngữ rõ ràng, chính xác
+
+Nếu văn bản không có thông tin cần thiết, hãy nêu rõ điều này."""
+
+    SYSTEM_PROMPT_EN: str = """You are a professional AI assistant helping users understand document content.
+When answering questions:
+1. Focus on the requested information
+2. Quote specific numbers when available
+3. List all mentioned entities
+4. Organize information logically
+5. Use clear and precise language
+
+If the text lacks necessary information, clearly state this."""
 
     model_config = SettingsConfigDict(
         env_file=".env",

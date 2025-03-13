@@ -1,7 +1,10 @@
-from typing import List, Optional, Set
+"""Semantic text splitting implementation."""
+from typing import List, Optional
 import re
+from src.domain.interfaces import TextSplitterInterface
+from src.domain.exceptions import ChunkingError
 
-class TextSplitter:
+class SemanticTextSplitter(TextSplitterInterface):
     """Split text into semantic units like paragraphs and sentences."""
     
     def __init__(
@@ -35,7 +38,7 @@ class TextSplitter:
     def _get_splits(self, text: str, unit: str) -> List[str]:
         """Split text by semantic unit."""
         if unit not in self.patterns:
-            raise ValueError(f"Unknown semantic unit: {unit}")
+            raise ChunkingError(f"Unknown semantic unit: {unit}")
             
         pattern = self.patterns[unit]
         parts = re.split(pattern, text)
@@ -59,7 +62,7 @@ class TextSplitter:
         result.append(current)
         return result
         
-    def chunks(self, text: str) -> List[str]:
+    def split(self, text: str) -> List[str]:
         """
         Split text into chunks using semantic units.
         
@@ -68,58 +71,65 @@ class TextSplitter:
             
         Returns:
             List of text chunks
+            
+        Raises:
+            ChunkingError: If chunking fails
         """
-        # Remove excessive whitespace
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        # Calculate size bounds
-        min_size = int(self.max_characters * (1 - self.flex))
-        max_size = int(self.max_characters * (1 + self.flex))
-        
-        chunks = [text]
-        
-        # Try each semantic unit in order
-        for unit in self.semantic_units:
-            new_chunks = []
+        try:
+            # Remove excessive whitespace
+            text = re.sub(r'\s+', ' ', text).strip()
             
-            for chunk in chunks:
-                # If chunk is within bounds, keep it
-                if len(chunk) <= max_size:
-                    new_chunks.append(chunk)
-                    continue
-                    
-                # Split oversized chunk
-                splits = self._get_splits(chunk, unit)
-                new_chunks.extend(splits)
+            # Calculate size bounds
+            min_size = int(self.max_characters * (1 - self.flex))
+            max_size = int(self.max_characters * (1 + self.flex))
+            
+            chunks = [text]
+            
+            # Try each semantic unit in order
+            for unit in self.semantic_units:
+                new_chunks = []
                 
-            chunks = new_chunks
-            
-        # Final pass: merge small chunks and split oversized ones
-        chunks = self._merge_small_chunks(chunks, min_size)
-        
-        # Split any remaining oversized chunks
-        if self.break_mode == "word":
-            pattern = self.patterns["word"]
-        else:  # sentence
-            pattern = self.patterns["sentence"]
-            
-        final_chunks = []
-        for chunk in chunks:
-            if len(chunk) <= max_size:
-                final_chunks.append(chunk)
-            else:
-                # Split on words/sentences and join until max size
-                parts = re.split(pattern, chunk)
-                current = parts[0]
-                
-                for part in parts[1:]:
-                    if len(current) + len(part) <= max_size:
-                        current += " " + part
-                    else:
-                        final_chunks.append(current)
-                        current = part
+                for chunk in chunks:
+                    # If chunk is within bounds, keep it
+                    if len(chunk) <= max_size:
+                        new_chunks.append(chunk)
+                        continue
                         
-                if current:
-                    final_chunks.append(current)
+                    # Split oversized chunk
+                    splits = self._get_splits(chunk, unit)
+                    new_chunks.extend(splits)
                     
-        return final_chunks
+                chunks = new_chunks
+                
+            # Final pass: merge small chunks and split oversized ones
+            chunks = self._merge_small_chunks(chunks, min_size)
+            
+            # Split any remaining oversized chunks
+            if self.break_mode == "word":
+                pattern = self.patterns["word"]
+            else:  # sentence
+                pattern = self.patterns["sentence"]
+                
+            final_chunks = []
+            for chunk in chunks:
+                if len(chunk) <= max_size:
+                    final_chunks.append(chunk)
+                else:
+                    # Split on words/sentences and join until max size
+                    parts = re.split(pattern, chunk)
+                    current = parts[0]
+                    
+                    for part in parts[1:]:
+                        if len(current) + len(part) <= max_size:
+                            current += " " + part
+                        else:
+                            final_chunks.append(current)
+                            current = part
+                            
+                    if current:
+                        final_chunks.append(current)
+                        
+            return final_chunks
+            
+        except Exception as e:
+            raise ChunkingError(f"Failed to split text: {str(e)}")

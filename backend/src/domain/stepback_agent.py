@@ -1,157 +1,206 @@
+"""Stepback prompting implementation."""
 import logging
-import httpx
-from src.core.config import settings
+from typing import Optional
+from src.domain.interfaces import LLMInterface
+from src.domain.exceptions import LLMError
 
 logger = logging.getLogger(__name__)
 
-class StepbackAgent:
-    """Agent that implements stepback prompting to improve answer quality.
+class StepbackPromptBuilder:
+    """Build prompts for stepback prompting."""
     
-    Takes the initial context and query, generates a higher-level perspective,
-    and uses that to enhance the final answer.
-    """
-    
-    def __init__(self):
-        self.llm_url = f"{settings.LMSTUDIO_BASE_URL}/chat/completions"
-        
-        self.stepback_prompt = """Bạn là một trợ lý AI chuyên nghiệp. Hãy phân tích câu hỏi và ngữ cảnh được cung cấp theo các bước sau:
+    @staticmethod
+    def build_stepback_prompt(context: str, query: str, language: str = "vi") -> str:
+        """Build prompt for generating stepback perspective."""
+        if language == "vi":
+            return f"""Hãy phân tích vấn đề ở mức độ tổng quan hơn:
 
-1. Xác định chủ đề/lĩnh vực rộng hơn mà câu hỏi này thuộc về
-2. Xác định các khái niệm chính cần thiết để hiểu chủ đề này
-3. Tạo một câu hỏi tổng quát hơn để giúp hiểu rõ bối cảnh của câu hỏi cụ thể
-
-Ngữ cảnh:
+Nội dung:
 {context}
 
 Câu hỏi:
 {query}
 
-Hãy phân tích từng bước:"""
+Hãy:
+1. Xác định các khái niệm và nguyên tắc cơ bản liên quan
+2. Phân tích mối quan hệ giữa các yếu tố
+3. Đưa ra góc nhìn tổng thể về vấn đề
+4. KHÔNG đưa ra câu trả lời cụ thể cho câu hỏi"""
+        else:
+            return f"""Analyze the issue from a broader perspective:
 
-        self.enhance_prompt = """Bạn là một trợ lý AI chuyên nghiệp. Dựa trên:
-
-1. Ngữ cảnh ban đầu
-2. Câu hỏi gốc
-3. Góc nhìn tổng quan vừa được phân tích
-4. Câu trả lời ban đầu
-
-Hãy tạo một câu trả lời toàn diện hơn, kết hợp cả chi tiết cụ thể và hiểu biết tổng quan.
-
-Ngữ cảnh ban đầu:
+Content:
 {context}
 
-Câu hỏi gốc:
+Question:
 {query}
 
-Góc nhìn tổng quan:
+Please:
+1. Identify relevant core concepts and principles
+2. Analyze relationships between elements
+3. Provide a holistic view of the issue
+4. DO NOT provide specific answers to the question"""
+
+    @staticmethod
+    def build_enhance_prompt(
+        context: str,
+        query: str,
+        stepback_result: str,
+        initial_answer: str,
+        language: str = "vi"
+    ) -> str:
+        """Build prompt for enhancing answer with stepback perspective."""
+        if language == "vi":
+            return f"""Dựa trên phân tích tổng quan và câu trả lời ban đầu, hãy đưa ra câu trả lời chi tiết và đầy đủ hơn.
+
+Nội dung:
+{context}
+
+Câu hỏi:
+{query}
+
+Phân tích tổng quan:
 {stepback_result}
 
 Câu trả lời ban đầu:
 {initial_answer}
 
-Hãy đưa ra câu trả lời toàn diện hơn:"""
+Hãy:
+1. Kết hợp góc nhìn tổng thể với chi tiết cụ thể
+2. Đảm bảo câu trả lời đầy đủ và chính xác
+3. Giải thích rõ mối liên hệ giữa các khía cạnh
+4. Nêu rõ nếu thiếu thông tin quan trọng"""
+        else:
+            return f"""Based on the broader analysis and initial answer, provide a more detailed and comprehensive response.
 
-    async def generate_stepback(self, context: str, query: str) -> str:
-        """Generate a higher-level perspective on the query."""
-        # Format prompt
-        prompt = self.stepback_prompt.format(
-            context=context,
-            query=query
-        )
-        
-        # Prepare payload
-        payload = {
-            "model": "llama3-docchat-1.0-8b-i1",
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.7,
-            "max_tokens": -1,
-            "stream": False
-        }
-        
-        # Make request to LMStudio
-        async with httpx.AsyncClient(timeout=settings.LMSTUDIO_TIMEOUT) as client:
-            try:
-                response = await client.post(
-                    self.llm_url,
-                    json=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Accept": "application/json"
-                    }
-                )
-                response.raise_for_status()
-                response_data = response.json()
-                
-                if "choices" not in response_data:
-                    logger.error(f"Unexpected response format: {response_data}")
-                    raise Exception(f"Unexpected response format: {response_data}")
-                
-                return response_data["choices"][0]["message"]["content"]
-            except Exception as e:
-                logger.error(f"Error generating stepback perspective: {str(e)}")
-                return ""
+Content:
+{context}
 
-    async def enhance_answer(self, 
-                           context: str, 
-                           query: str,
-                           initial_answer: str) -> str:
-        """Enhance the initial answer using stepback prompting."""
-        # Generate broader perspective
-        stepback_result = await self.generate_stepback(context, query)
-        
-        if not stepback_result:
-            logger.warning("Failed to generate stepback perspective, returning initial answer")
-            return initial_answer
-        
-        # Format enhance prompt
-        prompt = self.enhance_prompt.format(
-            context=context,
-            query=query,
-            stepback_result=stepback_result,
-            initial_answer=initial_answer
-        )
-        
-        # Prepare payload
-        payload = {
-            "model": "llama3-docchat-1.0-8b-i1",
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.7,
-            "max_tokens": -1,
-            "stream": False
-        }
-        
-        # Make request to LMStudio
-        async with httpx.AsyncClient(timeout=settings.LMSTUDIO_TIMEOUT) as client:
-            try:
-                response = await client.post(
-                    self.llm_url,
-                    json=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Accept": "application/json"
-                    }
-                )
-                response.raise_for_status()
-                response_data = response.json()
-                
-                if "choices" not in response_data:
-                    logger.error(f"Unexpected response format: {response_data}")
-                    return initial_answer
-                
-                enhanced_answer = response_data["choices"][0]["message"]["content"]
-                
-                # Format final response to include reasoning
-                final_response = f"""Phân tích tổng quan:
+Question:
+{query}
+
+Broader Analysis:
 {stepback_result}
 
-Câu trả lời chi tiết:
+Initial Answer:
+{initial_answer}
+
+Please:
+1. Combine holistic perspective with specific details
+2. Ensure comprehensive and accurate response
+3. Explain relationships between aspects clearly
+4. Indicate if important information is missing"""
+
+class StepbackAgent:
+    """Agent that implements stepback prompting to improve answer quality."""
+    
+    def __init__(self, llm_service: LLMInterface):
+        """
+        Initialize stepback agent.
+        
+        Args:
+            llm_service: Service for LLM interactions
+        """
+        self.llm_service = llm_service
+        self.prompt_builder = StepbackPromptBuilder()
+        
+    async def generate_stepback(
+        self,
+        context: str,
+        query: str,
+        language: str = "vi",
+        temperature: float = 0.7
+    ) -> str:
+        """
+        Generate higher-level perspective on query.
+        
+        Args:
+            context: Document context
+            query: User query
+            language: Response language
+            temperature: LLM temperature
+            
+        Returns:
+            Stepback perspective
+            
+        Raises:
+            LLMError: If generation fails
+        """
+        try:
+            # Build stepback prompt
+            prompt = self.prompt_builder.build_stepback_prompt(
+                context=context,
+                query=query,
+                language=language
+            )
+            
+            # Generate stepback perspective
+            return await self.llm_service.generate_completion(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature
+            )
+            
+        except Exception as e:
+            logger.error(f"Error generating stepback perspective: {str(e)}")
+            raise LLMError(f"Failed to generate stepback perspective: {str(e)}")
+
+    async def enhance_answer(
+        self,
+        context: str,
+        query: str,
+        initial_answer: str,
+        language: str = "vi",
+        temperature: float = 0.7
+    ) -> str:
+        """
+        Enhance initial answer using stepback prompting.
+        
+        Args:
+            context: Document context
+            query: User query
+            initial_answer: Initial response to enhance
+            language: Response language
+            temperature: LLM temperature
+            
+        Returns:
+            Enhanced answer
+            
+        Raises:
+            LLMError: If enhancement fails
+        """
+        try:
+            # Generate broader perspective
+            stepback_result = await self.generate_stepback(
+                context=context,
+                query=query,
+                language=language,
+                temperature=temperature
+            )
+            
+            # Build enhance prompt
+            prompt = self.prompt_builder.build_enhance_prompt(
+                context=context,
+                query=query,
+                stepback_result=stepback_result,
+                initial_answer=initial_answer,
+                language=language
+            )
+            
+            # Generate enhanced answer
+            enhanced_answer = await self.llm_service.generate_completion(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature
+            )
+            
+            # Format final response
+            final_response = f"""{"Phân tích tổng quan" if language == "vi" else "Broader Analysis"}:
+{stepback_result}
+
+{"Câu trả lời chi tiết" if language == "vi" else "Detailed Answer"}:
 {enhanced_answer}"""
-                
-                return final_response
-            except Exception as e:
-                logger.error(f"Error enhancing answer: {str(e)}")
-                return initial_answer
+            
+            return final_response
+            
+        except Exception as e:
+            logger.error(f"Error enhancing answer: {str(e)}")
+            raise LLMError(f"Failed to enhance answer: {str(e)}")

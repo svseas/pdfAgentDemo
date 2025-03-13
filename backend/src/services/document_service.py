@@ -1,3 +1,4 @@
+"""Document service implementation."""
 from pathlib import Path
 import logging
 from typing import List, Optional, Dict, Any
@@ -99,11 +100,16 @@ class DocumentService:
             # Update status to processing
             await self._repository.update_metadata_status(doc_id, "processing")
             
-            # Extract text chunks
-            chunks = self._pdf_processor.extract_text_chunks(file_path)
-            if not chunks:
+            # Extract text from PDF
+            text = self._pdf_processor.extract_text(str(file_path))
+            if not text:
                 raise ValueError("No text content extracted from PDF")
                 
+            # Process text into chunks
+            chunks = self._pdf_processor.process_text(text)
+            if not chunks:
+                raise ValueError("No chunks created from text")
+            
             # Generate embeddings
             embeddings = self._embedding_generator.generate_embeddings(chunks)
             

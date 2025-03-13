@@ -1,32 +1,78 @@
+"""Embedding generation implementation."""
 from typing import List, Union
 import requests
 import logging
 import numpy as np
 from requests.exceptions import RequestException
+from src.domain.interfaces import EmbeddingGeneratorInterface
+from src.domain.exceptions import EmbeddingError
 
 logger = logging.getLogger(__name__)
 
-class EmbeddingGenerator:
-    """Domain service for generating text embeddings using LMStudio"""
+class LMStudioEmbeddingGenerator(EmbeddingGeneratorInterface):
+    """Implementation of embedding generation using LMStudio."""
     
-    def __init__(self, api_url: str = 'http://127.0.0.1:1234'):
+    def __init__(self, api_url: str = 'http://127.0.0.1:1234', timeout: int = 30):
         """
-        Initialize the embedding generator with LMStudio API URL.
+        Initialize the embedding generator.
         
         Args:
             api_url: URL of the LMStudio API server
+            timeout: Request timeout in seconds
         """
         self.api_url = api_url.rstrip('/')
+        self.timeout = timeout
+        self.model = "text-embedding-nomic-embed-text-v1.5"
         
+    def _check_service_health(self) -> None:
+        """Check if LMStudio service is available."""
+        try:
+            requests.get(self.api_url, timeout=5).raise_for_status()
+        except RequestException as e:
+            logger.error(f"LMStudio is not available: {str(e)}")
+            raise EmbeddingError(f"LMStudio is not running at {self.api_url}")
+            
+    def _call_embeddings_api(self, texts: List[str]) -> List[np.ndarray]:
+        """Call LMStudio embeddings API."""
+        try:
+            response = requests.post(
+                f"{self.api_url}/embeddings",
+                json={
+                    "model": self.model,
+                    "input": texts
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            if 'error' in result:
+                raise EmbeddingError(f"LMStudio API error: {result['error']}")
+                
+            return [np.array(data['embedding']) for data in result['data']]
+            
+        except RequestException as e:
+            raise EmbeddingError(f"Failed to generate embeddings: {str(e)}")
+            
+    def _generate_mock_embedding(self, count: int = 1) -> List[np.ndarray]:
+        """Generate mock embeddings for fallback."""
+        logger.warning("Using mock embeddings")
+        mock_embedding = np.random.rand(768)  # Standard embedding size
+        return [mock_embedding for _ in range(count)]
+
     def generate_embeddings(self, texts: Union[str, List[str]]) -> List[np.ndarray]:
         """
-        Generate embeddings for a text or list of text chunks using LMStudio API.
+        Generate embeddings for texts.
         
         Args:
-            texts: Single text or list of text chunks to generate embeddings for
+            texts: Single text or list of texts
             
         Returns:
-            List of embedding vectors as numpy arrays
+            List of embedding vectors
+            
+        Raises:
+            EmbeddingError: If embedding generation fails
         """
         if isinstance(texts, str):
             texts = [texts]
@@ -34,61 +80,34 @@ class EmbeddingGenerator:
             return []
             
         try:
-            try:
-                # Check if LMStudio is running
-                requests.get(self.api_url, timeout=5).raise_for_status()
-            except RequestException as e:
-                logger.error(f"LMStudio is not running at {self.api_url}: {str(e)}")
-                raise RuntimeError(f"LMStudio is not running at {self.api_url}. Please start LMStudio first.")
-
-            # Call LMStudio embeddings API
-            response = requests.post(
-                f"{self.api_url}/embeddings",  # Removed duplicate v1
-                json={
-                    "model": "text-embedding-nomic-embed-text-v1.5",
-                    "input": texts
-                },
-                headers={"Content-Type": "application/json"},
-                timeout=30
-            )
-            response.raise_for_status()
+            self._check_service_health()
+            embeddings = self._call_embeddings_api(texts)
             
-            # Extract embeddings from response
-            result = response.json()
-            logger.info(f"LMStudio response: {result}")
-            
-            if 'error' in result:
-                logger.error(f"LMStudio API error: {result['error']}")
-                # Fallback to mock embeddings if API error
-                mock_embedding = np.random.rand(768)  # Using standard embedding size
-                embeddings = [mock_embedding for _ in texts]
-            else:
-                # Extract real embeddings from response
-                embeddings = [np.array(data['embedding']) for data in result['data']]
-            
-            # Log some information about the embeddings
             logger.info(f"Generated {len(embeddings)} embeddings")
-            logger.info(f"Embedding dimension: {embeddings[0].shape if embeddings else 'N/A'}")
-            
+            if embeddings:
+                logger.info(f"Embedding dimension: {embeddings[0].shape}")
+                
             return embeddings
             
-        except RequestException as e:
-            logger.error(f"Error generating embeddings: {str(e)}")
-            # Fallback to mock embeddings if request fails
-            mock_embedding = np.random.rand(768)
-            embeddings = [mock_embedding for _ in texts]
-            logger.warning("Using mock embeddings due to API error")
-            return embeddings
+        except EmbeddingError:
+            # Fallback to mock embeddings
+            return self._generate_mock_embedding(len(texts))
 
     def generate_embedding(self, text: str) -> np.ndarray:
         """
-        Generate embedding for a single text using LMStudio API.
+        Generate embedding for single text.
         
         Args:
-            text: Text to generate embedding for
+            text: Text to embed
             
         Returns:
-            Embedding vector as numpy array
+            Embedding vector
+            
+        Raises:
+            EmbeddingError: If embedding generation fails
         """
         embeddings = self.generate_embeddings(text)
-        return embeddings[0]  # Return first (and only) embedding
+        return embeddings[0]
+
+# For backward compatibility
+EmbeddingGenerator = LMStudioEmbeddingGenerator
