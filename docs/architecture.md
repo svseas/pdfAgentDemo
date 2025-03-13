@@ -1,68 +1,127 @@
 # Architecture Documentation
 
 ## Overview
-PDF Chat demo application using RAG (Retrieval Augmented Generation) that integrates with locally running LM Studio API. The system processes PDFs, stores embeddings in PostgreSQL with pgvector, and uses Llama3-DocChat-1.0-8B for chat completions.
+PDF Chat demo application using RAG (Retrieval Augmented Generation) that integrates with locally running LM Studio API. The system uses RabbitMQ for message queuing, Redis for caching, and PostgreSQL with pgvector for storage. The architecture is designed to be extensible, with clear interfaces that allow for future performance optimizations through Go service integration.
 
-## Components
+## Core Components
 
-### PDF Processing Module (src/pdf_processor.py)
-- Uses unstructured library to extract text from PDFs
-- Handles PDF parsing, text cleaning, and chunking
-- Supports two chunking methods:
-  * Semantic chunking: Uses semantic text splitting for general documents
-  * Agentic chunking: Intelligent chunking for legal documents using LLM
-- Generates embeddings using sentence-transformers
+### Service Architecture
+- Primary Python Service:
+  * FastAPI web application
+  * Agent-based workflow system
+  * LLM integration
+  * Business logic
+  * Performance-critical operations (future Go migration candidates)
+- Extension Points:
+  * PDF processing operations
+  * Vector operations
+  * Cache management
+  * Message queue workers
 
-### Vector Store Module (src/vector_store.py)
-- Manages PostgreSQL with pgvector extension
-- Handles document embedding storage and retrieval
-- Implements similarity search for RAG
+### Message Queue System (RabbitMQ)
+- Queue Types:
+  * Document processing queue
+  * Embedding generation queue
+  * Agent workflow queue
+  * Graph processing queue
+- Features:
+  * Message persistence
+  * Dead letter exchanges
+  * Priority queues
+  * Publisher confirms
+- Monitoring:
+  * Queue metrics
+  * Consumer health
+  * Message rates
+  * Error tracking
 
-### RAG Module (src/rag.py)
-- Implements RAG logic
-- Retrieves relevant context from vector store
-- Constructs prompts with retrieved context
+### Caching System
+- Multi-level caching strategy:
+  * In-memory cache (Redis)
+  * Disk-based cache
+  * Database materialized views
+- Key cache areas:
+  * Embeddings and vector calculations
+  * Query results and context
+  * Agent workflow intermediates
+  * Graph structures and calculations
+- Cache management:
+  * TTL-based expiration
+  * LRU eviction policy
+  * Cache warming strategies
+  * Invalidation protocols
 
-### GRAG Module (src/domain/grag)
-- Implements Graph-based Reranking for enhanced retrieval
-- Uses Abstract Meaning Representation (AMR) for semantic parsing
-- Builds document graphs based on semantic relationships
-- Applies Graph Neural Networks for context-aware reranking
-- Components:
-  - AMR Parser: Converts text to semantic graphs
-  - Graph Processor: Extracts and analyzes graph features
-  - GNN Reranker: Learns and applies graph-based relationships
+### API Layer (src/api)
+- RESTful API endpoints using FastAPI
+- Versioned API structure (v1)
+- Document operations and chat endpoints
+- Dependency injection for service management
+- Async task status tracking
 
-### Agentic Chunking Module (src/domain/agentic_chunker.py)
-- Provides intelligent document chunking for legal documents
-- Uses LLM to:
-  * Detect document structure and hierarchy
-  * Generate context-aware chunking instructions
-  * Create semantically meaningful chunks
-- Maintains legal context and cross-references
-- Supports both Vietnamese and English documents
-- Includes semantic chunking fallback for reliability
+### Core Infrastructure (src/core)
+- Configuration management
+- Database connection handling
+- Dependency injection container
+- Message queue integration
+- Cache management
+- LLM Service:
+  * Interfaces for LLM providers
+  * Provider implementations
+  * Prompt template management
+  * Async streaming chat completion
 
-### Chat Module (src/chat.py)
-- Implements async streaming chat completion using httpx
-- Connects to local LM Studio API (http://127.0.0.1:1234)
-- Uses Server-Sent Events (SSE) format for streaming responses
-- Handles JSON parsing and token streaming
+### Domain Layer (src/domain)
+
+#### Performance-Critical Processing (domain/processing)
+- PDF text extraction and processing
+- Vector operations and similarity search
+- Batch processing utilities
+- Designed for future Go migration:
+  * Clean interfaces
+  * Minimal dependencies
+  * Stateless operations
+  * Performance-focused design
+
+#### Agent System (domain/agents)
+- Base agent infrastructure
+- Specialized agents:
+  * Citation Agent: Extracts and validates citations
+  * Context Builder: Retrieves relevant document context
+  * Query Analyzer: Performs query analysis with summary context
+  * Query Synthesizer: Generates final responses
+  * Recursive Summarization: Creates hierarchical document summaries
+
+#### GRAG Module (domain/grag)
+- Graph-based Reranking for enhanced retrieval
+- AMR parsing for semantic graph construction
+- Graph processing models
+- GNN-based reranking service
+
+### Data Layer
+
+#### Models (src/models)
+- SQLAlchemy ORM models
+- Document and metadata models
+- Workflow tracking models
+- Cache tracking models
+- Task status models
+
+#### Repositories (src/repositories)
+- Document repository with vector search
+- Workflow repository for context tracking
+- Cache entry management
+- Task status tracking
 
 ## Dependencies
-- httpx: For async HTTP requests
-- python-dotenv: For environment variable management
-- unstructured: For PDF text extraction and processing
-- pgvector: For vector similarity search in PostgreSQL
-- sentence-transformers: For generating text embeddings
-- pdf2image: For PDF preprocessing
-- python-magic: For file type detection
-- requests: For LLM API calls in agentic chunking
-- torch: Deep learning framework for GRAG
-- networkx: Graph operations and analysis
-- penman: AMR graph parsing
-- transformers: AMRBART model for semantic parsing
-- torch-geometric: Graph Neural Networks
+- fastapi: Web framework
+- sqlalchemy: ORM and database operations
+- pgvector: Vector similarity in PostgreSQL
+- unstructured: PDF text extraction
+- sentence-transformers: Text embeddings
+- pika: RabbitMQ client
+- redis: Cache and pub/sub
+- transformers: AMRBART model
+- networkx: Graph processing
 
 ## Database Schema
 ```sql
@@ -70,43 +129,141 @@ PDF Chat demo application using RAG (Retrieval Augmented Generation) that integr
 CREATE TABLE documents (
     id SERIAL PRIMARY KEY,
     filename TEXT NOT NULL,
-    chunk_index INTEGER NOT NULL,
     content TEXT NOT NULL,
-    embedding vector(768)  -- Dimension depends on the embedding model
+    embedding vector(768),
+    metadata JSONB
 );
 
--- Create index for similarity search
+-- Workflow tracking
+CREATE TABLE workflow_summaries (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER REFERENCES documents(id),
+    summary_text TEXT NOT NULL,
+    summary_type TEXT NOT NULL,
+    embedding vector(768)
+);
+
+-- Cache tracking
+CREATE TABLE cache_entries (
+    id SERIAL PRIMARY KEY,
+    cache_key TEXT NOT NULL,
+    cache_type TEXT NOT NULL,
+    last_accessed TIMESTAMP,
+    hit_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP,
+    metadata JSONB
+);
+
+-- Task tracking
+CREATE TABLE task_status (
+    id SERIAL PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    result JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Materialized views
+CREATE MATERIALIZED VIEW common_document_contexts AS
+SELECT d.id, d.content, d.embedding, w.summary_text
+FROM documents d
+JOIN workflow_summaries w ON d.id = w.document_id
+WHERE w.summary_type = 'context';
+
+-- Vector search indices
 CREATE INDEX ON documents USING ivfflat (embedding vector_cosine_ops);
+CREATE INDEX ON workflow_summaries USING ivfflat (embedding vector_cosine_ops);
 ```
 
-## API Integration
-- Uses OpenAI-compatible API endpoints provided by LM Studio
-- Base URL: http://127.0.0.1:1234/v1
-- Endpoints:
-  - POST /chat/completions: For chat completion requests
+## Message Queue Architecture
 
-## RAG Process Flow
-1. PDF Processing:
-   - Extract text from PDF using unstructured
-   - Clean and chunk text using either:
-     * Semantic chunking for general documents
-     * Agentic chunking for legal documents (preserves legal context)
-   - Generate embeddings for each chunk
+1. Exchanges:
+   - document.processing: PDF processing tasks
+   - embedding.generation: Vector operations
+   - agent.workflow: Agent coordination
+   - graph.processing: GRAG operations
 
-2. Storage:
-   - Store text chunks and their embeddings in PostgreSQL
-   - Maintain document metadata and relationships
+2. Queue Configuration:
+   - Durable queues for persistence
+   - Dead letter exchanges for failed messages
+   - Priority queues for critical operations
+   - Publisher confirms for reliability
 
-3. Retrieval:
-   - On user query, generate query embedding
-   - Initial retrieval using similarity search
-   - Enhanced retrieval using GRAG (optional):
-     * Build semantic graphs from documents using AMR
-     * Create document graph based on shared concepts
-     * Apply GNN for context-aware reranking
-   - Return final set of most relevant chunks
+3. Worker Types:
+   - Document processing workers
+   - Embedding generation workers
+   - Agent workflow workers
+   - Graph processing workers
 
-4. Generation:
-   - Construct prompt with retrieved context
-   - Send to LM Studio API with Llama3-DocChat model
-   - Stream responses back to user
+4. Error Handling:
+   - Automatic retries with backoff
+   - Dead letter queues
+   - Error logging and monitoring
+   - Circuit breakers for failing services
+
+## Workflow Process
+
+1. Document Processing:
+   - PDF text extraction
+   - Intelligent chunking
+   - Embedding generation
+   - Storage in PostgreSQL
+   - Cache population:
+     * Document chunks
+     * Embeddings
+     * Processing metadata
+
+2. Query Processing:
+   - Cache lookup for similar queries
+   - Query analysis
+   - Context retrieval
+   - Agent-based response generation
+   - Cache updates:
+     * Query patterns
+     * Context retrievals
+     * Response templates
+
+3. Response Generation:
+   - Context-aware prompt construction
+   - Citation extraction and validation
+   - Streaming response delivery
+   - Workflow context maintenance
+   - Cache management:
+     * Response patterns
+     * Citation contexts
+     * Workflow states
+
+4. Performance Optimization:
+   - Efficient processing algorithms
+   - Distributed caching
+   - Queue-based load balancing
+   - Resource monitoring
+   - Extension points for future Go migration
+
+## Future Go Migration Path
+
+1. Performance-Critical Components:
+   - PDF processing operations
+   - Vector operations
+   - Batch processing
+   - Cache management
+
+2. Interface Requirements:
+   - Clean service boundaries
+   - Language-agnostic protocols
+   - Minimal cross-service dependencies
+   - Clear data contracts
+
+3. Migration Strategy:
+   - Identify performance bottlenecks
+   - Implement Go services incrementally
+   - Maintain Python fallbacks
+   - Validate performance improvements
+
+4. Integration Points:
+   - RabbitMQ for service communication
+   - Redis for shared caching
+   - Common data models
+   - Health checks and monitoring
