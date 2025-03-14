@@ -192,7 +192,6 @@ class QueryAnalyzerAgent(BaseAgent):
                 if summary["embedding"]:
                     similarity = self.cosine_similarity(query_embedding, summary["embedding"])
                     scored_summaries.append((summary, similarity))
-            
             scored_summaries.sort(key=lambda x: x[1], reverse=True)
             return scored_summaries[:top_k]
             
