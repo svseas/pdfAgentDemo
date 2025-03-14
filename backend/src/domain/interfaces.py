@@ -1,226 +1,190 @@
-"""Domain interfaces and abstract base classes."""
-from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional, Protocol
+"""Domain interfaces."""
+from typing import Dict, Any, List, Optional, Protocol
 from datetime import datetime
 import numpy as np
 
-class TextSplitterInterface(ABC):
-    """Interface for text splitting strategies."""
-    
-    @abstractmethod
-    async def split(self, text: str) -> List[str]:
-        """Split text into chunks."""
-        pass
-
-class EmbeddingGeneratorInterface(ABC):
-    """Interface for embedding generation."""
-    
-    @abstractmethod
-    async def generate_embedding(self, text: str) -> np.ndarray:
-        """Generate embedding for a single text."""
-        pass
-        
-    @abstractmethod
-    async def generate_embeddings(self, texts: List[str]) -> List[np.ndarray]:
-        """Generate embeddings for multiple texts."""
-        pass
-
-class LLMInterface(ABC):
-    """Interface for LLM interactions."""
-    
-    @abstractmethod
-    async def generate_completion(
-        self,
-        messages: List[Dict[str, str]],
-        temperature: float = 0.7
-    ) -> str:
-        """Generate completion from LLM."""
-        pass
-        
-    @abstractmethod
-    def get_prompt(self, prompt_type: str, language: str = "vi") -> str:
-        """Get prompt template."""
-        pass
-
-class DocumentProcessorInterface(ABC):
-    """Interface for document processing."""
-    
-    @abstractmethod
-    def extract_text(self, file_path: str) -> str:
-        """Extract text from document."""
-        pass
-        
-    @abstractmethod
-    async def process_text(self, text: str) -> List[str]:
-        """Process extracted text into chunks."""
-        pass
-
-class AgentInterface(Protocol):
-    """Base interface for all agents in the system."""
-    
-    async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Process input data and return output."""
-        ...
-
-    async def log_step(
-        self,
-        workflow_run_id: int,
-        sub_query_id: Optional[int],
-        input_data: Dict[str, Any],
-        output_data: Dict[str, Any],
-        status: str
-    ) -> int:
-        """Log an agent step to the database."""
-        ...
-
 class BaseRepository(Protocol):
     """Base interface for repositories."""
-    
+
     async def create(self, data: Dict[str, Any]) -> Any:
         """Create a new record."""
         ...
-        
-    async def get_by_id(self, id: int) -> Optional[Any]:
-        """Get a record by ID."""
-        ...
-        
-    async def update(self, id: int, data: Dict[str, Any]) -> Any:
-        """Update a record."""
-        ...
-        
-    async def delete(self, id: int) -> bool:
-        """Delete a record."""
+
+    async def get_by_id(self, id: int) -> Optional[Dict[str, Any]]:
+        """Get record by ID."""
         ...
 
-class WorkflowRepository(BaseRepository):
-    """Interface for workflow tracking repository."""
-    
-    async def create_workflow_run(
-        self,
-        user_query_id: int,
-        status: str = "running"
-    ) -> int:
-        """Create a new workflow run."""
+    async def update(self, id: int, data: Dict[str, Any]) -> Any:
+        """Update record."""
         ...
-        
-    async def update_workflow_status(
-        self,
-        workflow_id: int,
-        status: str,
-        final_answer: Optional[str] = None
-    ) -> None:
-        """Update workflow status and final answer."""
+
+    async def delete(self, id: int) -> bool:
+        """Delete record."""
         ...
-        
-    async def get_workflow_details(
+
+class EmbeddingGeneratorInterface(Protocol):
+    """Interface for embedding generation."""
+
+    def generate_embedding(self, text: str) -> np.ndarray:
+        """Generate embedding for text."""
+        ...
+
+    async def generate_embeddings(self, texts: List[str]) -> List[np.ndarray]:
+        """Generate embeddings for multiple texts."""
+        ...
+
+class DocumentProcessorInterface(Protocol):
+    """Interface for document processing."""
+
+    async def process_document(
         self,
-        workflow_id: int
+        file_path: str,
+        document_id: int,
+        language: str = "vietnamese"
     ) -> Dict[str, Any]:
-        """Get complete workflow details including steps and sub-queries."""
+        """Process a document file."""
+        ...
+
+    async def extract_text(
+        self,
+        file_path: str,
+        language: str = "vietnamese"
+    ) -> str:
+        """Extract text from a document file."""
+        ...
+
+    async def chunk_text(
+        self,
+        text: str,
+        chunk_size: int = 1000,
+        overlap: int = 200
+    ) -> List[Dict[str, Any]]:
+        """Split text into chunks."""
+        ...
+
+class TextSplitterInterface(Protocol):
+    """Interface for text splitting."""
+
+    def split_text(
+        self,
+        text: str,
+        chunk_size: int = 1000,
+        overlap: int = 200
+    ) -> List[str]:
+        """Split text into chunks."""
+        ...
+
+    def merge_short_texts(
+        self,
+        texts: List[str],
+        min_length: int = 500
+    ) -> List[str]:
+        """Merge short text chunks."""
+        ...
+
+class LLMInterface(Protocol):
+    """Interface for language model operations."""
+
+    async def generate_text(
+        self,
+        prompt: str,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None
+    ) -> str:
+        """Generate text using language model."""
+        ...
+
+    async def generate_chat_response(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None
+    ) -> str:
+        """Generate chat response using language model."""
+        ...
+
+class QueryProcessorInterface(Protocol):
+    """Interface for query processing."""
+
+    async def process_query(
+        self,
+        query: str,
+        language: str = "vietnamese"
+    ) -> Dict[str, Any]:
+        """Process a query."""
+        ...
+
+    async def generate_response(
+        self,
+        query: str,
+        context: List[Dict[str, Any]],
+        temperature: float = 0.7
+    ) -> str:
+        """Generate response using context."""
+        ...
+
+    def get_relevant_chunks(
+        self,
+        query: str,
+        doc_chunks: List[Dict[str, Any]],
+        top_k: int = 5,
+        use_grag: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Get relevant chunks for query."""
+        ...
+
+class DocumentRepository(BaseRepository):
+    """Interface for document repository."""
+
+    async def get_document_chunks(
+        self,
+        document_id: int,
+        chunk_size: int = 1000,
+        overlap: int = 200
+    ) -> List[Dict[str, Any]]:
+        """Get document chunks."""
+        ...
+
+    async def get_similar_chunks(
+        self,
+        query_embedding: List[float],
+        top_k: int = 5,
+        similarity_threshold: float = 0.7
+    ) -> List[Dict[str, Any]]:
+        """Get similar chunks using vector similarity."""
+        ...
+
+    async def get_surrounding_chunks(
+        self,
+        doc_metadata_id: int,
+        chunk_index: int,
+        window_size: int = 1
+    ) -> List[Dict[str, Any]]:
+        """Get surrounding chunks for context."""
         ...
 
 class QueryRepository(BaseRepository):
-    """Interface for query tracking repository."""
-    
-    async def create_user_query(
-        self,
-        query_text: str,
-        query_embedding: Optional[List[float]] = None,
-        is_system_query: bool = False
-    ) -> int:
-        """Create a new user query.
-        
-        Args:
-            query_text: The query text
-            query_embedding: Optional embedding vector for the query
-            is_system_query: If True, query will only be added to user_queries,
-                           not original_user_queries (e.g. for system-generated queries)
-        """
-        ...
-        
+    """Interface for query repository."""
+
     async def create_sub_query(
         self,
-        workflow_run_id: int,
         original_query_id: int,
         sub_query_text: str,
         sub_query_embedding: Optional[List[float]] = None
     ) -> int:
-        """Create a new sub-query."""
+        """Create a sub-query."""
         ...
 
-class AgentStepRepository(BaseRepository):
-    """Interface for agent step tracking repository."""
-    
-    async def log_agent_step(
+    async def get_sub_queries(
         self,
-        workflow_run_id: int,
-        agent_type: str,
-        sub_query_id: Optional[int],
-        input_data: Dict[str, Any],
-        output_data: Dict[str, Any],
-        status: str,
-        start_time: datetime
-    ) -> int:
-        """Log an agent processing step."""
-        ...
-        
-    async def update_step_status(
-        self,
-        step_id: int,
-        status: str,
-        output_data: Dict[str, Any],
-        end_time: datetime
-    ) -> None:
-        """Update agent step status and output."""
-        ...
-
-class ContextRepository(BaseRepository):
-    """Interface for context result tracking repository."""
-    
-    async def create_context_result(
-        self,
-        agent_step_id: int,
-        document_id: int,
-        chunk_id: Optional[int],
-        summary_id: Optional[int],
-        relevance_score: float,
-        used_in_response: bool = False
-    ) -> int:
-        """Create a new context result."""
-        ...
-        
-    async def mark_context_used(
-        self,
-        context_id: int,
-        used: bool = True
-    ) -> None:
-        """Mark a context as used in response."""
-        ...
-        
-    async def create_summary(
-        self,
-        document_id: int,
-        summary_level: int,
-        summary_text: str,
-        section_identifier: Optional[str] = None,
-        parent_summary_id: Optional[int] = None,
-        summary_metadata: Optional[Dict[str, Any]] = None
-    ) -> int:
-        """Create a document summary."""
-        ...
-        
-    async def create_summary_hierarchy(
-        self,
-        parent_summary_id: int,
-        child_summary_id: int,
-        relationship_type: str
-    ) -> None:
-        """Create a relationship between summaries."""
+        original_query_id: int
+    ) -> List[Dict[str, Any]]:
+        """Get all sub-queries for an original query."""
         ...
 
 class CitationRepository(BaseRepository):
-    """Interface for citation tracking repository."""
-    
+    """Interface for citation repository."""
+
     async def create_citation(
         self,
         document_id: int,
@@ -231,12 +195,11 @@ class CitationRepository(BaseRepository):
         authority_level: int,
         metadata: Dict[str, Any] = {}
     ) -> int:
-        """Create a new citation."""
+        """Create a citation."""
         ...
-        
+
     async def create_response_citation(
         self,
-        workflow_run_id: int,
         citation_id: int,
         context_used_id: int,
         relevance_score: float
@@ -244,26 +207,25 @@ class CitationRepository(BaseRepository):
         """Create a citation usage in response."""
         ...
 
-class QueryProcessorInterface(ABC):
-    """Interface for query processing."""
-    
-    @abstractmethod
-    def get_relevant_chunks(
+class ContextRepository(BaseRepository):
+    """Interface for context repository."""
+
+    async def create_context_set(
         self,
-        query: str,
-        doc_chunks: List[Dict[str, Any]],
-        top_k: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """Get relevant document chunks for query."""
-        pass
-        
-    @abstractmethod
-    async def generate_response(
+        original_query_id: int,
+        context_data: Dict[str, Any],
+        context_metadata: Dict[str, Any]
+    ) -> int:
+        """Create a context set."""
+        ...
+
+    async def create_context_result(
         self,
-        query: str,
-        relevant_chunks: List[Dict[str, Any]],
-        temperature: float = 0.7,
-        language: str = "vi"
-    ) -> str:
-        """Generate response from relevant chunks."""
-        pass
+        document_id: int,
+        chunk_id: Optional[int],
+        summary_id: Optional[int],
+        relevance_score: float,
+        used_in_response: bool = False
+    ) -> int:
+        """Create a context result."""
+        ...

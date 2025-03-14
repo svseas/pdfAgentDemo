@@ -20,7 +20,7 @@ class ContextRequest(BaseModel):
     temperature: float = 0.7
 
 class QueryRequest(BaseModel):
-    """Request for the complete RAG workflow"""
+    """Request for RAG query processing"""
     query: str
     top_k: int = 5
     similarity_threshold: float = 0.5
@@ -42,9 +42,9 @@ class CitationRequest(BaseModel):
     document_id: str
     query: str
     language: str = "vietnamese"
+
 class ContextBuilderRequest(BaseModel):
     """Request parameters for context building"""
-    workflow_run_id: int
     sub_query_id: int
     query_text: str
     query_embedding: List[float]
@@ -70,7 +70,6 @@ class ContextChunkResponse(BaseModel):
 class ContextBuilderResponse(BaseModel):
     """Response format for context building results"""
     status: str = "success"
-    workflow_run_id: int
     context_set_id: int
     original_query: str
     sub_queries: List[Dict[str, Any]]
@@ -96,4 +95,3 @@ class SynthesisRequest(BaseModel):
     citations: List[Dict[str, Any]]
     language: str = "vietnamese"
     temperature: float = 0.7
-

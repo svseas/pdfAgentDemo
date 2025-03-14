@@ -3,7 +3,7 @@ from typing import Dict, Any, Optional, List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.workflow import Citation, ResponseCitation
+from src.models.document_processing import Citation, ResponseCitation
 from src.repositories.base import BaseRepository
 from src.repositories.enums import CitationType
 from src.domain.exceptions import RepositoryError
@@ -40,7 +40,6 @@ class CitationRepository(BaseRepository[Citation]):
 
     async def create_response_citation(
         self,
-        workflow_run_id: int,
         citation_id: int,
         context_used_id: int,
         relevance_score: float
@@ -48,7 +47,6 @@ class CitationRepository(BaseRepository[Citation]):
         """Create a citation usage in response."""
         try:
             response_citation = ResponseCitation(
-                workflow_run_id=workflow_run_id,
                 citation_id=citation_id,
                 context_used_id=context_used_id,
                 relevance_score=relevance_score
@@ -74,16 +72,16 @@ class CitationRepository(BaseRepository[Citation]):
         except Exception as e:
             raise RepositoryError(f"Failed to get document citations: {str(e)}")
 
-    async def get_workflow_citations(
+    async def get_citations_by_context(
         self,
-        workflow_run_id: int
+        context_used_id: int
     ) -> List[ResponseCitation]:
-        """Get all citations used in a workflow response."""
+        """Get all citations used for a specific context."""
         try:
             query = select(ResponseCitation).where(
-                ResponseCitation.workflow_run_id == workflow_run_id
+                ResponseCitation.context_used_id == context_used_id
             )
             result = await self.session.execute(query)
             return result.scalars().all()
         except Exception as e:
-            raise RepositoryError(f"Failed to get workflow citations: {str(e)}")
+            raise RepositoryError(f"Failed to get context citations: {str(e)}")

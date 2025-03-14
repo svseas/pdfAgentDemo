@@ -1,98 +1,53 @@
-"""Custom exceptions for the application."""
+"""Domain exceptions."""
 
-class AgentError(Exception):
-    """Base exception for agent-related errors."""
+class DomainError(Exception):
+    """Base class for domain exceptions."""
     pass
 
-class ContextBuilderError(Exception):
-    """Exception raised when context building fails."""
+class RepositoryError(DomainError):
+    """Exception raised when repository operations fail."""
     pass
 
-class ChunkRetrievalError(Exception):
-    """Exception raised when chunk retrieval fails."""
+class AgentError(DomainError):
+    """Exception raised when agent operations fail."""
     pass
 
-class ChunkingError(Exception):
-    """Exception raised when text chunking fails."""
+class ChunkingError(DomainError):
+    """Exception raised when document chunking fails."""
     pass
 
-class LLMError(Exception):
-    """Exception raised when LLM operations fail."""
-    pass
-
-class ContextStorageError(Exception):
-    """Exception raised when context storage operations fail."""
-    pass
-
-class RepositoryError(Exception):
-    """Base exception for repository-related errors."""
-    pass
-
-class DocumentProcessingError(Exception):
-    """Exception raised when document processing fails."""
-    pass
-
-class EmbeddingError(Exception):
+class EmbeddingError(DomainError):
     """Exception raised when embedding generation fails."""
     pass
 
-class QueryProcessingError(Exception):
+class ContextBuilderError(DomainError):
+    """Exception raised when context building fails."""
+    pass
+
+class ChunkRetrievalError(DomainError):
+    """Exception raised when chunk retrieval fails."""
+    pass
+
+class ContextStorageError(DomainError):
+    """Exception raised when context storage fails."""
+    pass
+
+class QueryProcessingError(DomainError):
     """Exception raised when query processing fails."""
     pass
 
-class WorkflowError(Exception):
-    """Exception raised when workflow operations fail."""
+class CitationError(DomainError):
+    """Exception raised when citation operations fail."""
     pass
 
-class ValidationError(Exception):
-    """Exception raised when data validation fails."""
+class DocumentProcessingError(DomainError):
+    """Exception raised when document processing fails."""
     pass
 
-class ConfigurationError(Exception):
-    """Exception raised when configuration is invalid."""
+class TextSplittingError(DomainError):
+    """Exception raised when text splitting fails."""
     pass
 
-class ServiceError(Exception):
-    """Base exception for service-related errors."""
-    pass
-
-class IntegrationError(Exception):
-    """Exception raised when external service integration fails."""
-    pass
-
-class ResourceNotFoundError(Exception):
-    """Exception raised when a requested resource is not found."""
-    pass
-
-class AuthorizationError(Exception):
-    """Exception raised when authorization fails."""
-    pass
-
-class RateLimitError(Exception):
-    """Exception raised when rate limits are exceeded."""
-    pass
-
-class TextProcessingError(Exception):
-    """Exception raised when text processing operations fail."""
-    pass
-
-class PDFProcessingError(Exception):
-    """Exception raised when PDF processing operations fail."""
-    pass
-
-# LLM-specific errors
-class LLMTimeoutError(LLMError):
-    """Exception raised when LLM request times out."""
-    pass
-
-class LLMRateLimitError(LLMError):
-    """Exception raised when LLM rate limit is exceeded."""
-    pass
-
-class LLMContextLengthError(LLMError):
-    """Exception raised when input context is too long."""
-    pass
-
-class LLMAPIError(LLMError):
-    """Exception raised when LLM API returns an error."""
+class LLMError(DomainError):
+    """Exception raised when LLM operations fail."""
     pass

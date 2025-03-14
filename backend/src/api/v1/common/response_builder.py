@@ -42,23 +42,6 @@ class ResponseBuilder:
         return response
 
     @staticmethod
-    def workflow_response(
-        workflow_run_id: int,
-        data: Any,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """Build a workflow response."""
-        response = {
-            "status": "success",
-            "workflow_run_id": workflow_run_id,
-            "data": data,
-            "timestamp": datetime.now().isoformat()
-        }
-        if metadata:
-            response["metadata"] = metadata
-        return response
-
-    @staticmethod
     def chunk_response(
         chunks: List[Dict[str, Any]],
         total_chunks: int,

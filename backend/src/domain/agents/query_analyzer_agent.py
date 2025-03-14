@@ -4,12 +4,10 @@ import logging
 import json
 from typing import Dict, Any, List, Tuple, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.repositories.workflow_repository import (
-    AgentStepRepository,
-    QueryRepository,
-    ContextRepository
-)
+
 from src.repositories.document_repository import DocumentRepository
+from src.repositories.context_repository import ContextRepository
+from src.repositories.query_repository import QueryRepository
 from src.domain.stepback_agent import StepbackAgent
 from src.domain.embedding_generator import EmbeddingGenerator
 from src.domain.exceptions import AgentError
@@ -36,26 +34,24 @@ class QueryAnalyzerAgent(BaseAgent):
     def __init__(
         self,
         session: AsyncSession,
-        agent_step_repo: AgentStepRepository,
+        doc_repo: DocumentRepository,
         query_repo: QueryRepository,
         context_repo: ContextRepository,
-        doc_repo: DocumentRepository,
         embedding_generator: EmbeddingGenerator,
         *args,
         **kwargs
     ):
-        """Initialize quer  y analyzer agent.
+        """Initialize query analyzer agent.
         
         Args:
             session: Database session
-            agent_step_repo: Repository for agent step logging
+            doc_repo: Repository for document operations
             query_repo: Repository for query operations
             context_repo: Repository for context operations
-            doc_repo: Repository for document operations
             embedding_generator: Generator for text embeddings
             *args, **kwargs: Additional arguments for BaseAgent
         """
-        super().__init__(session, agent_step_repo, *args, **kwargs)
+        super().__init__(session, *args, **kwargs)
         self.embedding_generator = embedding_generator
         self.query_repo = query_repo
         self.context_repo = context_repo
@@ -72,7 +68,6 @@ class QueryAnalyzerAgent(BaseAgent):
         
         Args:
             input_data: Must contain:
-                - workflow_run_id: ID of current workflow run
                 - query_text: Text of query to analyze
                 - language: Language code (default: "vi")
                 
@@ -86,9 +81,9 @@ class QueryAnalyzerAgent(BaseAgent):
             AgentError: If query analysis fails
         """
         try:
-            workflow_run_id = input_data.get("workflow_run_id")
             query_text = input_data.get("query_text")
             language = "vi" if input_data.get("language", "vi").lower() in ["vi", "vietnamese"] else "en"
+            original_query_id = input_data.get("original_query_id")
             
             if not query_text:
                 raise AgentError("No query text provided")
@@ -109,22 +104,20 @@ class QueryAnalyzerAgent(BaseAgent):
                     query_text,
                     relevant_summaries,
                     language,
-                    workflow_run_id,
-                    input_data.get("query_id")
+                    original_query_id
                 )
             else:
                 # Fallback to template-based decomposition
                 sub_queries = await self._generate_template_sub_queries(
                     query_text,
                     language,
-                    workflow_run_id,
-                    input_data.get("query_id")
+                    original_query_id
                 )
             
             # Store context results if summaries were used
             if relevant_summaries:
                 await self._store_summary_contexts(
-                    input_data.get("agent_step_id"),  # Pass agent_step_id from input
+                    original_query_id,
                     relevant_summaries
                 )
             
@@ -203,7 +196,6 @@ class QueryAnalyzerAgent(BaseAgent):
         query_text: str,
         relevant_summaries: List[Tuple[Dict[str, Any], float]],
         language: str,
-        workflow_run_id: int,
         original_query_id: Optional[int]
     ) -> List[Dict[str, Any]]:
         """Generate sub-queries using LLM.
@@ -212,7 +204,6 @@ class QueryAnalyzerAgent(BaseAgent):
             query_text: Original query text
             relevant_summaries: List of relevant summaries
             language: Language code
-            workflow_run_id: Current workflow run ID
             original_query_id: Optional original query ID
             
         Returns:
@@ -278,7 +269,6 @@ class QueryAnalyzerAgent(BaseAgent):
                     
                     # Create sub-query
                     sub_query_id = await self.query_repo.create_sub_query(
-                        workflow_run_id,
                         original_query_id,
                         query["text"],
                         query_embedding
@@ -300,7 +290,6 @@ class QueryAnalyzerAgent(BaseAgent):
         self,
         query_text: str,
         language: str,
-        workflow_run_id: int,
         original_query_id: Optional[int]
     ) -> List[Dict[str, Any]]:
         """Generate sub-queries using templates.
@@ -308,7 +297,6 @@ class QueryAnalyzerAgent(BaseAgent):
         Args:
             query_text: Original query text
             language: Language code
-            workflow_run_id: Current workflow run ID
             original_query_id: Optional original query ID
             
         Returns:
@@ -342,7 +330,6 @@ class QueryAnalyzerAgent(BaseAgent):
             
             return await self._create_sub_queries(
                 sub_query_texts,
-                workflow_run_id,
                 original_query_id
             )
             
@@ -352,14 +339,12 @@ class QueryAnalyzerAgent(BaseAgent):
     async def _create_sub_queries(
         self,
         sub_query_texts: List[str],
-        workflow_run_id: int,
         original_query_id: Optional[int]
     ) -> List[Dict[str, Any]]:
         """Create sub-query records in database.
         
         Args:
             sub_query_texts: List of sub-query texts
-            workflow_run_id: Current workflow run ID
             original_query_id: Optional original query ID
             
         Returns:
@@ -394,7 +379,6 @@ class QueryAnalyzerAgent(BaseAgent):
 
                     # Create sub-query with embedding
                     sub_query_id = await self.query_repo.create_sub_query(
-                        workflow_run_id,
                         original_query_id,
                         question,
                         sub_query_embedding
@@ -410,25 +394,24 @@ class QueryAnalyzerAgent(BaseAgent):
 
     async def _store_summary_contexts(
         self,
-        agent_step_id: int,
+        original_query_id: int,
         relevant_summaries: List[Tuple[Dict[str, Any], float]]
     ) -> None:
         """Store used summaries as context results.
         
         Args:
-            agent_step_id: Current agent step ID
+            original_query_id: Original query ID
             relevant_summaries: List of relevant summaries
             
         Raises:
             AgentError: If context storage fails
         """
         try:
-            if not agent_step_id:
-                raise AgentError("No agent step ID provided for storing contexts")
+            if not original_query_id:
+                raise AgentError("No original query ID provided for storing contexts")
                 
             for summary, score in relevant_summaries:
                 await self.context_repo.create_context_result(
-                    agent_step_id=agent_step_id,
                     document_id=summary["document_id"],
                     chunk_id=None,
                     summary_id=summary["id"],

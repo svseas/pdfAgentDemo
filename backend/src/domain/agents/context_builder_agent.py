@@ -5,16 +5,13 @@ import logging
 import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.repositories.workflow_repository import (
-    AgentStepRepository,
-    ContextRepository,
-    SQLQueryRepository
-)
+
+from src.repositories.context_repository import ContextRepository
+from src.repositories.query_repository import QueryRepository
 from src.repositories.document_repository import DocumentRepository
-from src.models.workflow import SubQuery
+from src.models.document_processing import SubQuery
 from src.domain.query_processor import QueryProcessor
 from src.domain.exceptions import (
-    AgentError,
     ContextBuilderError,
     ChunkRetrievalError,
     ContextStorageError
@@ -23,6 +20,7 @@ from src.domain.agents.base_agent import BaseAgent
 from src.schemas.rag import ContextBuilderRequest, ContextBuilderResponse
 
 logger = logging.getLogger(__name__)
+
 class ContextBuilderAgent(BaseAgent):
     """Agent that builds context for queries using vector search.
     
@@ -38,9 +36,8 @@ class ContextBuilderAgent(BaseAgent):
     def __init__(
         self,
         session: AsyncSession,
-        agent_step_repo: AgentStepRepository,
         context_repo: ContextRepository,
-        query_repo: SQLQueryRepository,
+        query_repo: QueryRepository,
         doc_repo: DocumentRepository,
         query_processor: QueryProcessor,
         *args,
@@ -50,15 +47,13 @@ class ContextBuilderAgent(BaseAgent):
         
         Args:
             session: Database session
-            agent_step_repo: Repository for agent step logging
             context_repo: Repository for context operations
             query_repo: Repository for query operations
             doc_repo: Repository for document operations
             query_processor: Processor for finding relevant chunks
             *args, **kwargs: Additional arguments for BaseAgent
         """
-        super().__init__(session, agent_step_repo, *args, **kwargs)
-        self.agent_step_repo = agent_step_repo
+        super().__init__(session, *args, **kwargs)
         self.query_processor = query_processor
         self.context_repo = context_repo
         self.query_repo = query_repo
@@ -69,7 +64,6 @@ class ContextBuilderAgent(BaseAgent):
         
         Args:
             input_data: Must contain:
-                - workflow_run_id: ID of current workflow run
                 - sub_query_id: ID of sub-query to process
                 - query_text: Text of query to process
                 - is_original: Whether this is the original query
@@ -82,11 +76,6 @@ class ContextBuilderAgent(BaseAgent):
             ContextBuilderError: If context building fails
         """
         try:
-            # Validate input
-            workflow_run_id = input_data.get("workflow_run_id")
-            if not workflow_run_id:
-                raise ContextBuilderError("No workflow run ID provided")
-
             sub_query_id = input_data.get("sub_query_id")
             if not sub_query_id:
                 raise ContextBuilderError("No sub-query ID provided")
@@ -113,16 +102,6 @@ class ContextBuilderAgent(BaseAgent):
             # Add surrounding context
             context_results = await self._add_surrounding_context(context_results)
             
-            # Store context results
-            context_ids = await self._store_context_results(
-                workflow_run_id=workflow_run_id,
-                sub_query_id=sub_query_id,
-                context_results=context_results
-            )
-
-            # Get all sub-queries for this workflow run
-            sub_queries = await self._get_workflow_sub_queries(workflow_run_id)
-            
             # Format context data
             context_data = {
                 "total_chunks": len(context_results),
@@ -132,7 +111,6 @@ class ContextBuilderAgent(BaseAgent):
             
             # Store complete context in context_sets table
             context_set_id = await self.context_repo.create_context_set(
-                workflow_run_id=workflow_run_id,
                 original_query_id=sub_query.original_query_id,
                 context_data=context_data,
                 context_metadata={
@@ -146,10 +124,8 @@ class ContextBuilderAgent(BaseAgent):
             # Format response
             return {
                 "status": "success",
-                "workflow_run_id": workflow_run_id,
                 "context_set_id": context_set_id,
                 "original_query": query_text if input_data.get("is_original") else None,
-                "sub_queries": sub_queries,
                 "context": context_data
             }
             
@@ -267,94 +243,6 @@ class ContextBuilderAgent(BaseAgent):
 
         except Exception as e:
             raise ChunkRetrievalError(f"Failed to add surrounding context: {str(e)}") from e
-
-    async def _get_workflow_sub_queries(self, workflow_run_id: int) -> List[Dict[str, Any]]:
-        """Get all sub-queries for a workflow run.
-        
-        Args:
-            workflow_run_id: ID of the workflow run
-            
-        Returns:
-            List of sub-queries with metadata
-            
-        Raises:
-            ContextBuilderError: If query retrieval fails
-        """
-        try:
-            result = await self.session.execute(
-                select(SubQuery).where(
-                    SubQuery.workflow_run_id == workflow_run_id
-                ).order_by(SubQuery.id)
-            )
-            sub_queries = result.scalars().all()
-
-            return [
-                {
-                    "id": sq.id,
-                    "text": sq.sub_query_text,
-                    "is_original": sq.id == workflow_run_id  # First sub-query is original
-                }
-                for sq in sub_queries
-            ]
-        except Exception as e:
-            raise ContextBuilderError(f"Failed to get workflow sub-queries: {str(e)}") from e
-
-    async def _store_context_results(
-        self,
-        workflow_run_id: int,
-        sub_query_id: int,
-        context_results: List[Dict[str, Any]]
-    ) -> List[int]:
-        """Store context results in database.
-        
-        Args:
-            workflow_run_id: ID of workflow run
-            sub_query_id: ID of sub-query
-            context_results: List of context chunks to store
-            
-        Returns:
-            List of created context result IDs
-            
-        Raises:
-            ContextStorageError: If storing results fails
-        """
-        try:
-            # Create agent step for this context building operation
-            step_id = await self.agent_step_repo.create({
-                "workflow_run_id": workflow_run_id,
-                "agent_type": "context_builder",
-                "sub_query_id": sub_query_id,
-                "input_data": {"sub_query_id": sub_query_id},
-                "output_data": {},
-                "status": "running",
-                "start_time": datetime.now()
-            })
-
-            # Store each context result
-            context_ids = []
-            for result in context_results:
-                context_id = await self.context_repo.create_context_result(
-                    agent_step_id=step_id,
-                    document_id=result["doc_metadata_id"],
-                    chunk_id=result["id"],
-                    summary_id=None,  # We're using chunks, not summaries
-                    relevance_score=result.get("relevance", 0.0),
-                    used_in_response=False
-                )
-                context_ids.append(context_id)
-
-            # Update agent step status
-            await self.agent_step_repo.update_step_status(
-                step_id=step_id,
-                status="success",
-                output_data={"context_ids": context_ids},
-                end_time=datetime.now()
-            )
-
-            return context_ids
-            
-        except Exception as e:
-            raise ContextStorageError(f"Failed to store context results: {str(e)}") from e
 
     def _format_chunk(self, chunk: Dict[str, Any]) -> Dict[str, Any]:
         """Format chunk data according to schema.

@@ -3,10 +3,7 @@ import logging
 from typing import Dict, Any, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.repositories.workflow_repository import (
-    AgentStepRepository,
-    ContextRepository
-)
+from src.repositories.context_repository import ContextRepository
 from src.domain.pdf_processor import PDFProcessor
 from src.domain.embedding_generator import EmbeddingGenerator
 from src.domain.exceptions import AgentError
@@ -38,7 +35,6 @@ class RecursiveSummarizationAgent(BaseAgent):
     def __init__(
         self,
         session: AsyncSession,
-        agent_step_repo: AgentStepRepository,
         context_repo: ContextRepository,
         pdf_processor: PDFProcessor,
         embedding_generator: EmbeddingGenerator,
@@ -49,13 +45,12 @@ class RecursiveSummarizationAgent(BaseAgent):
         
         Args:
             session: Database session
-            agent_step_repo: Repository for agent step logging
             context_repo: Repository for context operations
             pdf_processor: Processor for PDF documents
             embedding_generator: Generator for text embeddings
             *args, **kwargs: Additional arguments for BaseAgent
         """
-        super().__init__(session, agent_step_repo, *args, **kwargs)
+        super().__init__(session, *args, **kwargs)
         self.pdf_processor = pdf_processor
         self.embedding_generator = embedding_generator
         self.context_repo = context_repo
@@ -66,7 +61,6 @@ class RecursiveSummarizationAgent(BaseAgent):
         Args:
             input_data: Must contain:
                 - document_id: ID of document to summarize
-                - workflow_run_id: ID of current workflow run
                 - language: Language code (default: "vi")
                 - max_length: Maximum summary length (default: 500)
                 

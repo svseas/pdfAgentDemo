@@ -3,11 +3,8 @@ from typing import Dict, Any, List, Optional
 import re
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.repositories.workflow_repository import (
-    AgentStepRepository,
-    CitationRepository,
-    ContextRepository
-)
+from src.repositories.citation_repository import CitationRepository
+from src.repositories.context_repository import ContextRepository
 from src.domain.exceptions import AgentError
 from .base_agent import BaseAgent
 
@@ -28,7 +25,6 @@ class CitationAgent(BaseAgent):
     def __init__(
         self,
         session: AsyncSession,
-        agent_step_repo: AgentStepRepository,
         citation_repo: CitationRepository,
         context_repo: ContextRepository,
         *args,
@@ -38,12 +34,11 @@ class CitationAgent(BaseAgent):
         
         Args:
             session: Database session
-            agent_step_repo: Repository for agent step logging
             citation_repo: Repository for citation operations
             context_repo: Repository for context operations
             *args, **kwargs: Additional arguments for BaseAgent
         """
-        super().__init__(session, agent_step_repo, *args, **kwargs)
+        super().__init__(session, *args, **kwargs)
         self.citation_repo = citation_repo
         self.context_repo = context_repo
 
@@ -52,7 +47,6 @@ class CitationAgent(BaseAgent):
         
         Args:
             input_data: Must contain:
-                - workflow_run_id: ID of current workflow run
                 - context_results: List of context result IDs
                 
         Returns:
@@ -81,7 +75,6 @@ class CitationAgent(BaseAgent):
                     citation_id = await self._create_citation(
                         context,
                         citation,
-                        input_data["workflow_run_id"],
                         context_id
                     )
                     extracted_citations.append({
@@ -176,7 +169,6 @@ class CitationAgent(BaseAgent):
         self,
         context: Dict[str, Any],
         citation: Dict[str, Any],
-        workflow_run_id: int,
         context_id: int
     ) -> int:
         """Create citation record and link to response."""
@@ -194,7 +186,6 @@ class CitationAgent(BaseAgent):
             
             # Link citation to response
             await self.citation_repo.create_response_citation(
-                workflow_run_id,
                 citation_id,
                 context_id,
                 citation.get("relevance", 0.8)

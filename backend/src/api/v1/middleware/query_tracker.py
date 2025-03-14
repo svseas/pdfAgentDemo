@@ -1,5 +1,5 @@
-"""Workflow tracking middleware for API routes."""
-from typing import Callable, Any, Optional
+"""Query tracking middleware for API routes."""
+from typing import Callable, Any
 from functools import wraps
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,14 +7,13 @@ from sqlalchemy import select, text
 from datetime import datetime
 
 from src.api.dependencies import get_db
-from src.models.workflow import WorkflowRun, UserQuery, OriginalUserQuery
-from src.repositories.enums import WorkflowStatus, QueryType
+from src.models.document_processing import OriginalUserQuery
 
-def track_workflow(
+def track_query(
     query_param: str = "query",
     is_system_query: bool = False
 ) -> Callable:
-    """Decorator to track workflow for API routes.
+    """Decorator to track queries for API routes.
     
     Args:
         query_param: Name of the parameter containing the query text
@@ -53,7 +52,6 @@ def track_workflow(
                 original_query = result.scalar_one_or_none()
 
                 # Create original query if it doesn't exist
-                # Always create original query since sub-queries need it
                 if not original_query:
                     original_query = OriginalUserQuery(
                         query_text=query_text,
@@ -63,44 +61,17 @@ def track_workflow(
                     db.add(original_query)
                     await db.flush()
 
-                # Create user query
-                query = UserQuery(
-                    query_text=query_text,
-                    original_query_id=original_query.id,  # Always link to original
-                    created_at=datetime.now()
-                )
-                db.add(query)
-                await db.flush()
-                query_id = query.id
-
-                # Create workflow run
-                workflow = WorkflowRun(
-                    user_query_id=query_id,
-                    status=WorkflowStatus.RUNNING
-                )
-                db.add(workflow)
-                await db.flush()
-                workflow_run_id = workflow.id
-
-                # Add workflow context to kwargs
-                kwargs["workflow_run_id"] = workflow_run_id
-                kwargs["query_id"] = query_id
+                # Add query context to kwargs
                 kwargs["original_query_id"] = original_query.id
 
                 try:
                     # Execute route handler
                     result = await func(*args, db=db, **kwargs)
-
-                    # Update workflow status on success
-                    workflow.status = WorkflowStatus.COMPLETED
                     await db.commit()
-
                     return result
 
                 except Exception as e:
-                    # Update workflow status on failure
-                    workflow.status = WorkflowStatus.FAILED
-                    await db.commit()
+                    await db.rollback()
                     raise
 
             except Exception as e:

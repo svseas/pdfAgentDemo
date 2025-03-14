@@ -10,12 +10,9 @@ from src.domain.embedding_generator import EmbeddingGenerator
 from src.domain.pdf_processor import PDFProcessor
 from src.domain.query_processor import QueryProcessor
 from src.repositories.document_repository import DocumentRepository
-from src.repositories.workflow_repository import (
-    SQLAgentStepRepository,
-    SQLContextRepository,
-    SQLQueryRepository,
-    SQLCitationRepository
-)
+from src.repositories.context_repository import ContextRepository
+from src.repositories.query_repository import QueryRepository
+from src.repositories.citation_repository import CitationRepository
 from src.services.document_service import DocumentService
 from src.domain.agents.recursive_summarization_agent import RecursiveSummarizationAgent
 from src.domain.agents.query_analyzer_agent import QueryAnalyzerAgent
@@ -84,35 +81,28 @@ def get_prompt_manager() -> PromptTemplateInterface:
     return PromptManager()
 
 # Repository dependencies
-async def get_agent_step_repository(
-    db: AsyncSession = Depends(get_db)
-) -> SQLAgentStepRepository:
-    """Get agent step repository instance."""
-    return SQLAgentStepRepository(db)
-
 async def get_context_repository(
     db: AsyncSession = Depends(get_db)
-) -> SQLContextRepository:
+) -> ContextRepository:
     """Get context repository instance."""
-    return SQLContextRepository(db)
+    return ContextRepository(db)
 
 async def get_query_repository(
     db: AsyncSession = Depends(get_db)
-) -> SQLQueryRepository:
+) -> QueryRepository:
     """Get query repository instance."""
-    return SQLQueryRepository(db)
+    return QueryRepository(db)
 
 async def get_citation_repository(
     db: AsyncSession = Depends(get_db)
-) -> SQLCitationRepository:
+) -> CitationRepository:
     """Get citation repository instance."""
-    return SQLCitationRepository(db)
+    return CitationRepository(db)
 
 # Agent dependencies
 async def get_summarization_agent(
     session: AsyncSession = Depends(get_db),
-    agent_step_repo: SQLAgentStepRepository = Depends(get_agent_step_repository),
-    context_repo: SQLContextRepository = Depends(get_context_repository),
+    context_repo: ContextRepository = Depends(get_context_repository),
     pdf_processor: PDFProcessor = Depends(get_pdf_processor),
     embedding_generator: EmbeddingGenerator = Depends(get_embedding_generator),
     llm_service: LLMService = Depends(get_llm_service),
@@ -121,7 +111,6 @@ async def get_summarization_agent(
     """Get summarization agent instance."""
     return RecursiveSummarizationAgent(
         session=session,
-        agent_step_repo=agent_step_repo,
         context_repo=context_repo,
         pdf_processor=pdf_processor,
         embedding_generator=embedding_generator,
@@ -131,9 +120,8 @@ async def get_summarization_agent(
 
 async def get_query_analyzer_agent(
     session: AsyncSession = Depends(get_db),
-    agent_step_repo: SQLAgentStepRepository = Depends(get_agent_step_repository),
-    query_repo: SQLQueryRepository = Depends(get_query_repository),
-    context_repo: SQLContextRepository = Depends(get_context_repository),
+    query_repo: QueryRepository = Depends(get_query_repository),
+    context_repo: ContextRepository = Depends(get_context_repository),
     doc_repo: DocumentRepository = Depends(get_document_repository),
     embedding_generator: EmbeddingGenerator = Depends(get_embedding_generator),
     llm_service: LLMService = Depends(get_llm_service),
@@ -142,7 +130,6 @@ async def get_query_analyzer_agent(
     """Get query analyzer agent instance."""
     return QueryAnalyzerAgent(
         session=session,
-        agent_step_repo=agent_step_repo,
         query_repo=query_repo,
         context_repo=context_repo,
         doc_repo=doc_repo,
@@ -153,16 +140,14 @@ async def get_query_analyzer_agent(
 
 async def get_citation_agent(
     session: AsyncSession = Depends(get_db),
-    agent_step_repo: SQLAgentStepRepository = Depends(get_agent_step_repository),
-    citation_repo: SQLCitationRepository = Depends(get_citation_repository),
-    context_repo: SQLContextRepository = Depends(get_context_repository),
+    citation_repo: CitationRepository = Depends(get_citation_repository),
+    context_repo: ContextRepository = Depends(get_context_repository),
     llm_service: LLMService = Depends(get_llm_service),
     prompt_manager: PromptTemplateInterface = Depends(get_prompt_manager)
 ) -> CitationAgent:
     """Get citation agent instance."""
     return CitationAgent(
         session=session,
-        agent_step_repo=agent_step_repo,
         citation_repo=citation_repo,
         context_repo=context_repo,
         llm=llm_service,
@@ -171,15 +156,13 @@ async def get_citation_agent(
 
 async def get_query_synthesizer_agent(
     session: AsyncSession = Depends(get_db),
-    agent_step_repo: SQLAgentStepRepository = Depends(get_agent_step_repository),
-    context_repo: SQLContextRepository = Depends(get_context_repository),
+    context_repo: ContextRepository = Depends(get_context_repository),
     llm_service: LLMService = Depends(get_llm_service),
     prompt_manager: PromptTemplateInterface = Depends(get_prompt_manager)
 ) -> QuerySynthesizerAgent:
     """Get query synthesizer agent instance."""
     return QuerySynthesizerAgent(
         session=session,
-        agent_step_repo=agent_step_repo,
         context_repo=context_repo,
         llm=llm_service,
         prompt_manager=prompt_manager
@@ -187,17 +170,14 @@ async def get_query_synthesizer_agent(
 
 async def get_context_builder_agent(
     session: AsyncSession = Depends(get_db),
-    agent_step_repo: SQLAgentStepRepository = Depends(get_agent_step_repository),
-    context_repo: SQLContextRepository = Depends(get_context_repository),
-    query_repo: SQLQueryRepository = Depends(get_query_repository),
+    context_repo: ContextRepository = Depends(get_context_repository),
+    query_repo: QueryRepository = Depends(get_query_repository),
     doc_repo: DocumentRepository = Depends(get_document_repository),
     query_processor: QueryProcessor = Depends(get_query_processor)
 ) -> ContextBuilderAgent:
     """Get context builder agent instance."""
-    from src.domain.agents.context_builder_agent import ContextBuilderAgent
     return ContextBuilderAgent(
         session=session,
-        agent_step_repo=agent_step_repo,
         context_repo=context_repo,
         query_repo=query_repo,
         doc_repo=doc_repo,

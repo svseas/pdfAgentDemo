@@ -2,10 +2,7 @@
 from typing import Dict, Any, List
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.repositories.workflow_repository import (
-    AgentStepRepository,
-    ContextRepository
-)
+from src.repositories.context_repository import ContextRepository
 from src.domain.stepback_agent import StepbackAgent
 from src.domain.exceptions import AgentError
 from .base_agent import BaseAgent
@@ -26,7 +23,6 @@ class QuerySynthesizerAgent(BaseAgent):
     def __init__(
         self,
         session: AsyncSession,
-        agent_step_repo: AgentStepRepository,
         context_repo: ContextRepository,
         *args,
         **kwargs
@@ -35,11 +31,10 @@ class QuerySynthesizerAgent(BaseAgent):
         
         Args:
             session: Database session
-            agent_step_repo: Repository for agent step logging
             context_repo: Repository for context operations
             *args, **kwargs: Additional arguments for BaseAgent
         """
-        super().__init__(session, agent_step_repo, *args, **kwargs)
+        super().__init__(session, *args, **kwargs)
         self.context_repo = context_repo
 
     async def _process_impl(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -47,7 +42,6 @@ class QuerySynthesizerAgent(BaseAgent):
         
         Args:
             input_data: Must contain:
-                - workflow_run_id: ID of current workflow run
                 - original_query: Original query text
                 - sub_query_results: List of sub-query results
                 - citations: Optional list of citations
@@ -64,7 +58,6 @@ class QuerySynthesizerAgent(BaseAgent):
             AgentError: If answer synthesis fails
         """
         try:
-            workflow_run_id = input_data.get("workflow_run_id")
             original_query = input_data.get("original_query")
             sub_query_results = input_data.get("sub_query_results", [])
             citations = input_data.get("citations", [])
