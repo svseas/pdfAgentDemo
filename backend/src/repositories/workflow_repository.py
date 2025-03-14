@@ -142,11 +142,29 @@ class SQLQueryRepository(QueryRepository):
 
     async def create_user_query(
         self,
-        query_text: str
+        query_text: str,
+        is_system_query: bool = False
     ) -> int:
-        """Create a new user query and original query if needed."""
+        """Create a new user query and original query if needed.
+        
+        Args:
+            query_text: The query text
+            is_system_query: If True, query will only be added to user_queries,
+                           not original_user_queries (e.g. for system-generated queries)
+        """
         try:
-            # Check if original query exists
+            if is_system_query:
+                # For system queries, just create a user query without original reference
+                query = UserQuery(
+                    query_text=query_text,
+                    created_at=datetime.now()
+                )
+                self.session.add(query)
+                await self.session.commit()
+                await self.session.refresh(query)
+                return query.id
+
+            # For user queries, check if original exists
             result = await self.session.execute(
                 select(OriginalUserQuery).where(OriginalUserQuery.query_text == query_text)
             )

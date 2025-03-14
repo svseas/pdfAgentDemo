@@ -23,6 +23,7 @@ class OriginalUserQuery(Base):
 
     # Relationships
     derived_queries = relationship("UserQuery", back_populates="original_query")
+    sub_queries = relationship("SubQuery", back_populates="original_query")
 
     __table_args__ = (
         # Cosine similarity search index
@@ -50,7 +51,6 @@ class UserQuery(Base):
 
     # Relationships
     workflow_runs = relationship("WorkflowRun", back_populates="user_query")
-    sub_queries = relationship("SubQuery", back_populates="original_query")
     original_query = relationship("OriginalUserQuery", back_populates="derived_queries")
 
 class WorkflowRun(Base):
@@ -76,7 +76,7 @@ class SubQuery(Base):
 
     id = Column(Integer, primary_key=True)
     workflow_run_id = Column(Integer, ForeignKey("workflow_runs.id"), nullable=False)
-    original_query_id = Column(Integer, ForeignKey("user_queries.id"), nullable=False)
+    original_query_id = Column(Integer, ForeignKey("original_user_queries.id"), nullable=False)
     sub_query_text = Column(String, nullable=False)
     sub_query_embedding: Mapped[list[float]] = mapped_column(
         Vector(768),
@@ -87,7 +87,7 @@ class SubQuery(Base):
 
     # Relationships
     workflow_run = relationship("WorkflowRun", back_populates="sub_queries")
-    original_query = relationship("UserQuery", back_populates="sub_queries")
+    original_query = relationship("OriginalUserQuery", back_populates="sub_queries")
     agent_steps = relationship("AgentStep", back_populates="sub_query")
 
     __table_args__ = (

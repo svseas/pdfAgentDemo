@@ -2,10 +2,13 @@ from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 import logging
 import shutil
 from pathlib import Path
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.embedding_generator import EmbeddingGenerator
 from src.domain.query_processor import QueryProcessor
+from src.domain.exceptions import AgentError
+from src.models.workflow import UserQuery
 from src.api.dependencies import (
     get_embedding_generator, 
     get_query_processor, 
@@ -202,7 +205,10 @@ async def summarize_document(
         
         # Create a system query for summarization
         query_text = f"Summarize document {request.document_id}"
-        query_id = await query_repo.create_user_query(query_text)
+        query_id = await query_repo.create_user_query(
+            query_text=query_text,
+            is_system_query=True  # Mark as system query so it doesn't go into original_user_queries
+        )
         
         # Create workflow run
         workflow_run_id = await workflow_repo.create_workflow_run(
@@ -257,7 +263,14 @@ async def analyze_query(
         
         # Create user query first
         query_id = await query_repo.create_user_query(request.query)
-        
+
+        # Get the user query to access its original_query_id
+        stmt = select(UserQuery).where(UserQuery.id == query_id)
+        result = await db.execute(stmt)
+        user_query = result.scalar_one_or_none()
+        if not user_query:
+            raise AgentError("Failed to retrieve created user query")
+
         try:
             # Generate embedding asynchronously
             logger.info("Generating embedding for query: %s", request.query)
@@ -283,7 +296,7 @@ async def analyze_query(
         # Process query with workflow context
         input_data = {
             "workflow_run_id": workflow_run_id,
-            "query_id": query_id,
+            "query_id": user_query.original_query_id,  # Use original_query_id instead of user_query.id
             "query_text": request.query,
             "language": request.language
         }

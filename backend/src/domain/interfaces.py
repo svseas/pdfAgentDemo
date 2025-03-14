@@ -125,9 +125,17 @@ class QueryRepository(BaseRepository):
     async def create_user_query(
         self,
         query_text: str,
-        query_embedding: Optional[List[float]] = None
+        query_embedding: Optional[List[float]] = None,
+        is_system_query: bool = False
     ) -> int:
-        """Create a new user query."""
+        """Create a new user query.
+        
+        Args:
+            query_text: The query text
+            query_embedding: Optional embedding vector for the query
+            is_system_query: If True, query will only be added to user_queries,
+                           not original_user_queries (e.g. for system-generated queries)
+        """
         ...
         
     async def create_sub_query(

@@ -4,9 +4,6 @@ import logging
 import json
 from typing import Dict, Any, List, Tuple, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-
-logger = logging.getLogger(__name__)
-
 from src.repositories.workflow_repository import (
     AgentStepRepository,
     QueryRepository,
@@ -17,6 +14,8 @@ from src.domain.stepback_agent import StepbackAgent
 from src.domain.embedding_generator import EmbeddingGenerator
 from src.domain.exceptions import AgentError
 from .base_agent import BaseAgent
+
+logger = logging.getLogger(__name__)
 
 class QueryAnalyzerAgent(BaseAgent):
     """Agent that analyzes queries and breaks them down into sub-queries.

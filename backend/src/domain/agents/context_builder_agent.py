@@ -8,7 +8,7 @@ from src.repositories.workflow_repository import (
 )
 from src.domain.query_processor import QueryProcessor
 from src.domain.exceptions import AgentError
-from .base_agent import BaseAgent
+from src.domain.agents.base_agent import BaseAgent
 
 class ContextBuilderAgent(BaseAgent):
     """Agent that builds context for queries using vector search.
