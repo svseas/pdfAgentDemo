@@ -23,7 +23,14 @@ from src.models.workflow import (
     ContextResult,
     Citation,
     ResponseCitation,
-    DocumentSummary
+    DocumentSummary,
+    ContextSet
+)
+from src.domain.exceptions import (
+    AgentError,
+    ContextBuilderError,
+    ChunkRetrievalError,
+    ContextStorageError
 )
 from .document_repository import DocumentRepository
 
@@ -369,6 +376,91 @@ class SQLContextRepository(ContextRepository):
 
     def __init__(self, session: AsyncSession):
         self.session = session
+
+    async def create_context_set(
+        self,
+        workflow_run_id: int,
+        original_query_id: int,
+        context_data: Dict[str, Any],
+        context_metadata: Optional[Dict[str, Any]] = None
+    ) -> int:
+        """Create or update a context set.
+        
+        Args:
+            workflow_run_id: ID of the workflow run
+            original_query_id: ID of the original query
+            context_data: Complete context data including chunks
+            context_metadata: Optional metadata about the context
+            
+        Returns:
+            ID of the created/updated context set
+            
+        Raises:
+            ContextStorageError: If operation fails
+        """
+        try:
+            # Check if context set exists for this original query
+            result = await self.session.execute(
+                select(ContextSet).where(
+                    ContextSet.original_query_id == original_query_id
+                )
+            )
+            existing_context_set = result.scalar_one_or_none()
+
+            if existing_context_set:
+                # Update existing context set
+                existing_context_set.workflow_run_id = workflow_run_id
+                existing_context_set.context_data = context_data
+                existing_context_set.context_metadata = context_metadata or {}
+                existing_context_set.updated_at = datetime.now()
+                await self.session.flush()
+                return existing_context_set.id
+            else:
+                # Create new context set
+                context_set = ContextSet(
+                    workflow_run_id=workflow_run_id,
+                    original_query_id=original_query_id,
+                    context_data=context_data,
+                    context_metadata=context_metadata or {}
+                )
+                self.session.add(context_set)
+                await self.session.flush()
+                return context_set.id
+
+        except Exception as e:
+            await self.session.rollback()
+            raise ContextStorageError(f"Failed to create/update context set: {str(e)}")
+
+    async def get_context_set(self, context_set_id: int) -> Optional[Dict[str, Any]]:
+        """Get a context set by ID.
+        
+        Args:
+            context_set_id: ID of the context set
+            
+        Returns:
+            Context set data if found, None otherwise
+            
+        Raises:
+            ContextStorageError: If retrieval fails
+        """
+        try:
+            result = await self.session.execute(
+                select(ContextSet).where(ContextSet.id == context_set_id)
+            )
+            context_set = result.scalar_one_or_none()
+            if context_set:
+                return {
+                    "id": context_set.id,
+                    "workflow_run_id": context_set.workflow_run_id,
+                    "original_query_id": context_set.original_query_id,
+                    "context_data": context_set.context_data,
+                    "metadata": context_set.metadata,
+                    "created_at": context_set.created_at,
+                    "updated_at": context_set.updated_at
+                }
+            return None
+        except Exception as e:
+            raise ContextStorageError(f"Failed to get context set: {str(e)}")
 
     async def get_document_chunks(self, document_id: int) -> List[Dict[str, Any]]:
         """Get all chunks for a document with their metadata and embeddings.

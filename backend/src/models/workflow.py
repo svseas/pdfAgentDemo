@@ -189,6 +189,23 @@ class Citation(Base):
     chunk = relationship("Document")
     response_citations = relationship("ResponseCitation", back_populates="citation")
 
+class ContextSet(Base):
+    """Model for complete context sets."""
+    __tablename__ = "context_sets"
+
+    id = Column(Integer, primary_key=True)
+    workflow_run_id = Column(Integer, ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False)
+    original_query_id = Column(Integer, ForeignKey("original_user_queries.id", ondelete="CASCADE"), nullable=False)
+    context_data = Column(JSON, nullable=False, comment="Complete context data including chunks")
+    context_metadata = Column(JSON, nullable=False, default={}, comment="Context metadata like total chunks, tokens, etc.")
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+    # Relationships
+    workflow_run = relationship("WorkflowRun")
+    original_query = relationship("OriginalUserQuery")
+
+
 class ResponseCitation(Base):
     """Model for citations used in responses."""
     __tablename__ = "response_citations"

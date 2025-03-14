@@ -1,4 +1,5 @@
 """Custom domain exceptions."""
+from typing import Dict, Any, Optional
 
 class DomainError(Exception):
     """Base class for domain exceptions."""
@@ -45,4 +46,18 @@ class AgentError(DomainError):
         ... except AgentError as e:
         ...     logger.error(f"Agent processing failed: {e}")
     """
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        self.details = details or {}
+        super().__init__(message)
+
+class ContextBuilderError(AgentError):
+    """Raised when context building fails."""
+    pass
+
+class ChunkRetrievalError(ContextBuilderError):
+    """Raised when chunk retrieval fails."""
+    pass
+
+class ContextStorageError(ContextBuilderError):
+    """Raised when context storage fails."""
     pass

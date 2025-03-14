@@ -8,16 +8,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.domain.embedding_generator import EmbeddingGenerator
 from src.domain.query_processor import QueryProcessor
 from src.domain.exceptions import AgentError
-from src.models.workflow import UserQuery
+from src.models.workflow import (
+    UserQuery,
+    OriginalUserQuery,
+    SubQuery
+)
+from src.domain.agents.context_builder_agent import ContextBuilderAgent
 from src.api.dependencies import (
-    get_embedding_generator, 
-    get_query_processor, 
-    get_document_repository, 
+    get_embedding_generator,
+    get_query_processor,
+    get_document_repository,
     get_document_service,
     get_summarization_agent,
     get_query_analyzer_agent,
     get_citation_agent,
     get_query_synthesizer_agent,
+    get_context_builder_agent,
     get_db
 )
 from src.repositories.document_repository import DocumentRepository
@@ -36,7 +42,9 @@ from src.schemas.rag import (
     SummarizeRequest,
     QueryAnalysisRequest,
     CitationRequest,
-    SynthesisRequest
+    SynthesisRequest,
+    BuildQueryContextRequest,
+    ContextBuilderResponse
 )
 
 logger = logging.getLogger(__name__)
@@ -360,6 +368,131 @@ async def extract_citations(
         return {"citations": result.get("citations", [])}
     except Exception as e:
         logger.error(f"Error extracting citations: {str(e)}")
+        if 'workflow_run_id' in locals():
+            await workflow_repo.update_workflow_status(
+                workflow_run_id,
+                "failed"
+            )
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/build-query-context", response_model=ContextBuilderResponse)
+async def build_query_context(
+    request: BuildQueryContextRequest,
+    context_builder: ContextBuilderAgent = Depends(get_context_builder_agent),
+    db: AsyncSession = Depends(get_db)
+) -> ContextBuilderResponse:
+    """Build context from original query and its sub-queries.
+    
+    This endpoint:
+    1. Gets the original query and all related sub-queries
+    2. Creates a workflow run
+    3. Processes each query to build context
+    4. Returns combined context results
+    """
+    try:
+        # Get repositories
+        query_repo = SQLQueryRepository(db)
+        workflow_repo = SQLWorkflowRepository(db)
+
+        # Get original query
+        result = await db.execute(
+            select(OriginalUserQuery).where(
+                OriginalUserQuery.id == request.original_query_id
+            )
+        )
+        original_query = result.scalar_one_or_none()
+        if not original_query:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Original query {request.original_query_id} not found"
+            )
+
+        # Create a system query for context building
+        query_text = f"Build context for: {original_query.query_text}"
+        user_query_id = await query_repo.create_user_query(
+            query_text=query_text,
+            is_system_query=True  # Mark as system query
+        )
+
+        # Get existing sub-queries
+        result = await db.execute(
+            select(SubQuery).where(
+                SubQuery.original_query_id == request.original_query_id
+            )
+        )
+        sub_queries = result.scalars().all()
+        if not sub_queries:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No sub-queries found for original query {request.original_query_id}"
+            )
+
+        # Create workflow run with the system query
+        workflow_run_id = await workflow_repo.create_workflow_run(
+            user_query_id=user_query_id,
+            status="running"
+        )
+
+        # Process each sub-query (including original)
+        all_chunks = []
+        last_context_set_id = None
+        
+        for sub_query in sub_queries:
+            result = await context_builder.process({
+                "workflow_run_id": workflow_run_id,
+                "sub_query_id": sub_query.id,
+                "query_text": sub_query.sub_query_text,
+                "is_original": sub_query.id == sub_queries[0].id,
+                "top_k": request.top_k
+            })
+            
+            # Store context set ID from first result
+            if last_context_set_id is None:
+                last_context_set_id = result.get("context_set_id")
+            
+            # Add chunks to combined list
+            if "context" in result and "chunks" in result["context"]:
+                all_chunks.extend(result["context"]["chunks"])
+        
+        # Deduplicate chunks by ID
+        seen_chunk_ids = set()
+        unique_chunks = []
+        for chunk in all_chunks:
+            if chunk["id"] not in seen_chunk_ids:
+                seen_chunk_ids.add(chunk["id"])
+                unique_chunks.append(chunk)
+        
+        # Sort by document ID and chunk index
+        unique_chunks.sort(key=lambda x: (x["document_id"], x["chunk_index"]))
+        
+        # Update workflow status
+        await workflow_repo.update_workflow_status(
+            workflow_run_id,
+            "completed"
+        )
+
+        # Create final response
+        return {
+            "status": "success",
+            "workflow_run_id": workflow_run_id,
+            "context_set_id": last_context_set_id,
+            "original_query": sub_queries[0].sub_query_text,
+            "sub_queries": [{
+                "id": sq.id,
+                "text": sq.sub_query_text,
+                "is_original": sq.id == sub_queries[0].id
+            } for sq in sub_queries],
+            "context": {
+                "total_chunks": len(unique_chunks),
+                "total_tokens": sum(len(chunk["text"].split()) for chunk in unique_chunks),
+                "chunks": unique_chunks
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error building query context: {str(e)}")
         if 'workflow_run_id' in locals():
             await workflow_repo.update_workflow_status(
                 workflow_run_id,

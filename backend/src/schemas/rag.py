@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, validator
+from datetime import datetime
 
 class VectorizeRequest(BaseModel):
     text: str
@@ -41,6 +42,51 @@ class CitationRequest(BaseModel):
     document_id: str
     query: str
     language: str = "vietnamese"
+class ContextBuilderRequest(BaseModel):
+    """Request parameters for context building"""
+    workflow_run_id: int
+    sub_query_id: int
+    query_text: str
+    query_embedding: List[float]
+    is_original: bool = False
+    top_k: int = 5
+
+    @validator('query_embedding')
+    def validate_embedding_dim(cls, v):
+        if len(v) != 768:
+            raise ValueError("Query embedding must be 768-dimensional")
+        return v
+
+class ContextChunkResponse(BaseModel):
+    """Response format for a single context chunk"""
+    id: int
+    document_id: int
+    document_name: str
+    chunk_index: int
+    is_direct_match: bool
+    relevance_score: float
+    text: str
+
+class ContextBuilderResponse(BaseModel):
+    """Response format for context building results"""
+    status: str = "success"
+    workflow_run_id: int
+    context_set_id: int
+    original_query: str
+    sub_queries: List[Dict[str, Any]]
+    context: Dict[str, Any] = Field(
+        default_factory=lambda: {
+            "total_chunks": 0,
+            "total_tokens": 0,
+            "chunks": []
+        }
+    )
+
+class BuildQueryContextRequest(BaseModel):
+    """Request for building context from original query and its sub-queries"""
+    original_query_id: int
+    top_k: int = 5
+    similarity_threshold: float = 0.5
 
 class SynthesisRequest(BaseModel):
     """Request for answer synthesis"""
@@ -50,3 +96,4 @@ class SynthesisRequest(BaseModel):
     citations: List[Dict[str, Any]]
     language: str = "vietnamese"
     temperature: float = 0.7
+

@@ -240,3 +240,39 @@ class DocumentRepository:
         logger.info(f"Found {len(chunks)} chunks with similarity scores")
         
         return chunks
+
+    async def get_surrounding_chunks(
+        self,
+        doc_metadata_id: int,
+        chunk_index: int,
+        window_size: int = 1
+    ) -> List[Document]:
+        """Get surrounding chunks for context.
+        
+        Args:
+            doc_metadata_id: ID of the document metadata
+            chunk_index: Index of the current chunk
+            window_size: Number of chunks to get on each side
+            
+        Returns:
+            List of surrounding document chunks ordered by chunk_index
+        """
+        # Get chunks within the window, excluding the current chunk
+        query = select(Document).where(
+            Document.doc_metadata_id == doc_metadata_id,
+            Document.chunk_index.between(
+                chunk_index - window_size,
+                chunk_index + window_size
+            ),
+            Document.chunk_index != chunk_index
+        ).order_by(Document.chunk_index)
+        
+        result = await self._db.execute(query)
+        chunks = list(result.scalars().all())
+        
+        # Convert embeddings to numpy arrays
+        for chunk in chunks:
+            if chunk.embedding is not None:
+                chunk.embedding = np.array(chunk.embedding)
+                
+        return chunks

@@ -21,6 +21,7 @@ from src.domain.agents.recursive_summarization_agent import RecursiveSummarizati
 from src.domain.agents.query_analyzer_agent import QueryAnalyzerAgent
 from src.domain.agents.citation_agent import CitationAgent
 from src.domain.agents.query_synthesizer_agent import QuerySynthesizerAgent
+from src.domain.agents.context_builder_agent import ContextBuilderAgent
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Get async database session."""
@@ -182,4 +183,23 @@ async def get_query_synthesizer_agent(
         context_repo=context_repo,
         llm=llm_service,
         prompt_manager=prompt_manager
+    )
+
+async def get_context_builder_agent(
+    session: AsyncSession = Depends(get_db),
+    agent_step_repo: SQLAgentStepRepository = Depends(get_agent_step_repository),
+    context_repo: SQLContextRepository = Depends(get_context_repository),
+    query_repo: SQLQueryRepository = Depends(get_query_repository),
+    doc_repo: DocumentRepository = Depends(get_document_repository),
+    query_processor: QueryProcessor = Depends(get_query_processor)
+) -> ContextBuilderAgent:
+    """Get context builder agent instance."""
+    from src.domain.agents.context_builder_agent import ContextBuilderAgent
+    return ContextBuilderAgent(
+        session=session,
+        agent_step_repo=agent_step_repo,
+        context_repo=context_repo,
+        query_repo=query_repo,
+        doc_repo=doc_repo,
+        query_processor=query_processor
     )
