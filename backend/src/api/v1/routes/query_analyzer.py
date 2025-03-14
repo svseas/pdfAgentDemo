@@ -28,8 +28,7 @@ async def analyze_query(
     request: QueryAnalysisRequest,
     query_analyzer: QueryAnalyzerAgent = Depends(get_query_analyzer_agent),
     embedding_generator: EmbeddingGenerator = Depends(get_embedding_generator),
-    db: AsyncSession = Depends(get_db),
-    original_query_id: Optional[int] = None
+    db: AsyncSession = Depends(get_db)
 ) -> dict:
     """Analyze query using stepback prompting.
     
@@ -56,8 +55,8 @@ async def analyze_query(
         )
 
         # Update original query embedding
-        if query_embedding is not None and original_query_id:
-            original_query = await db.get(OriginalUserQuery, original_query_id)
+        if query_embedding is not None and request.original_query_id:
+            original_query = await db.get(OriginalUserQuery, request.original_query_id)
             if original_query:
                 original_query.query_embedding = query_embedding
                 original_query.updated_at = datetime.now()
@@ -70,7 +69,7 @@ async def analyze_query(
         
         # Process query
         input_data = {
-            "query_id": original_query_id,
+            "query_id": request.original_query_id,
             "query_text": request.query,
             "language": request.language
         }

@@ -64,8 +64,7 @@ async def build_context(
 async def build_query_context(
     request: BuildQueryContextRequest,
     context_builder: ContextBuilderAgent = Depends(get_context_builder_agent),
-    db: AsyncSession = Depends(get_db),
-    original_query_id: Optional[int] = None
+    db: AsyncSession = Depends(get_db)
 ) -> ContextBuilderResponse:
     """Build context from original query and its sub-queries.
     

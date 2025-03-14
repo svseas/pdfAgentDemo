@@ -23,8 +23,7 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 async def summarize_document(
     request: SummarizeRequest,
     summarization_agent: RecursiveSummarizationAgent = Depends(get_summarization_agent),
-    db: AsyncSession = Depends(get_db),
-    original_query_id: Optional[int] = None
+    db: AsyncSession = Depends(get_db)
 ) -> dict:
     """Generate a recursive summary of a document.
     
@@ -46,7 +45,7 @@ async def summarize_document(
             "document_id": int(request.document_id),
             "language": request.language,
             "max_length": request.max_length,
-            "original_query_id": original_query_id
+            "original_query_id": request.original_query_id
         }
         
         result = await summarization_agent.process(input_data)

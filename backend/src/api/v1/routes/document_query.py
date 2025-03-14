@@ -30,8 +30,7 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 async def query_documents(
     request: QueryRequest,
     query_service: QueryProcessor = Depends(get_query_processor),
-    doc_repository: DocumentRepository = Depends(get_document_repository),
-    original_query_id: Optional[int] = None
+    doc_repository: DocumentRepository = Depends(get_document_repository)
 ) -> dict:
     """Complete RAG workflow: search documents and generate response.
     

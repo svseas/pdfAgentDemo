@@ -28,8 +28,7 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 async def extract_citations(
     request: CitationRequest,
     citation_agent: CitationAgent = Depends(get_citation_agent),
-    db: AsyncSession = Depends(get_db),
-    original_query_id: Optional[int] = None
+    db: AsyncSession = Depends(get_db)
 ) -> dict:
     """Extract relevant citations from document.
     
@@ -48,7 +47,7 @@ async def extract_citations(
     try:
         # Process request
         input_data = {
-            "original_query_id": original_query_id,
+            "original_query_id": request.original_query_id,
             "document_id": int(request.document_id),
             "query_text": request.query,
             "language": request.language
