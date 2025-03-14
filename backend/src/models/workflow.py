@@ -7,18 +7,51 @@ from pgvector.sqlalchemy import Vector
 
 from .base import Base
 
+class OriginalUserQuery(Base):
+    """Model for original user queries."""
+    __tablename__ = "original_user_queries"
+
+    id = Column(Integer, primary_key=True)
+    query_text = Column(String, nullable=False)
+    query_embedding: Mapped[list[float]] = mapped_column(
+        Vector(768),
+        nullable=True,
+        comment="Query embedding vector for similarity search"
+    )
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+    # Relationships
+    derived_queries = relationship("UserQuery", back_populates="original_query")
+
+    __table_args__ = (
+        # Cosine similarity search index
+        Index(
+            "ix_original_user_queries_embedding_cosine",
+            "query_embedding",
+            postgresql_using="ivfflat",
+            postgresql_ops={"query_embedding": "vector_cosine_ops"}
+        ),
+    )
+
 class UserQuery(Base):
     """Model for user queries."""
     __tablename__ = "user_queries"
 
     id = Column(Integer, primary_key=True)
     query_text = Column(String, nullable=False)
-    query_embedding = Column(JSON)  # Store as JSON array
+    query_embedding: Mapped[list[float]] = mapped_column(
+        Vector(768),
+        nullable=True,
+        comment="Query embedding vector for similarity search"
+    )
     created_at = Column(DateTime, default=datetime.now, nullable=False)
+    original_query_id = Column(Integer, ForeignKey("original_user_queries.id"), nullable=True)
 
     # Relationships
     workflow_runs = relationship("WorkflowRun", back_populates="user_query")
     sub_queries = relationship("SubQuery", back_populates="original_query")
+    original_query = relationship("OriginalUserQuery", back_populates="derived_queries")
 
 class WorkflowRun(Base):
     """Model for workflow runs."""
@@ -45,13 +78,27 @@ class SubQuery(Base):
     workflow_run_id = Column(Integer, ForeignKey("workflow_runs.id"), nullable=False)
     original_query_id = Column(Integer, ForeignKey("user_queries.id"), nullable=False)
     sub_query_text = Column(String, nullable=False)
-    sub_query_embedding = Column(JSON)  # Store as JSON array
+    sub_query_embedding: Mapped[list[float]] = mapped_column(
+        Vector(768),
+        nullable=True,
+        comment="Sub-query embedding vector for similarity search"
+    )
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationships
     workflow_run = relationship("WorkflowRun", back_populates="sub_queries")
     original_query = relationship("UserQuery", back_populates="sub_queries")
     agent_steps = relationship("AgentStep", back_populates="sub_query")
+
+    __table_args__ = (
+        # Cosine similarity search index
+        Index(
+            "ix_sub_queries_embedding_cosine",
+            "sub_query_embedding",
+            postgresql_using="ivfflat",
+            postgresql_ops={"sub_query_embedding": "vector_cosine_ops"}
+        ),
+    )
 
 class AgentStep(Base):
     """Model for agent processing steps."""

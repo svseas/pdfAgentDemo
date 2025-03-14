@@ -1,7 +1,11 @@
 """Query analysis and decomposition agent."""
 import numpy as np
+import logging
+import json
 from typing import Dict, Any, List, Tuple, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from src.repositories.workflow_repository import (
     AgentStepRepository,
@@ -41,7 +45,7 @@ class QueryAnalyzerAgent(BaseAgent):
         *args,
         **kwargs
     ):
-        """Initialize query analyzer agent.
+        """Initialize quer  y analyzer agent.
         
         Args:
             session: Database session
@@ -247,15 +251,49 @@ class QueryAnalyzerAgent(BaseAgent):
             )
             
             result = await self.llm.generate_completion([
-                {"role": "system", "content": "You are a query analysis expert."},
+                {"role": "system", "content": "You are a query analysis expert. Always respond in valid JSON format."},
                 {"role": "user", "content": prompt}
             ])
             
-            return await self._create_sub_queries(
-                result.split("\n"),
-                workflow_run_id,
-                original_query_id
-            )
+            logger.info(f"LLM Response: {result}")
+            
+            try:
+                # Parse JSON response
+                result = result.strip()
+                if result.startswith("```json"):
+                    result = result[7:]  # Skip ```json
+                if result.endswith("```"):
+                    result = result[:-3]  # Skip ```
+                    
+                response_data = json.loads(result.strip())
+                sub_queries = response_data.get("sub_queries", [])
+                
+                # Create sub-queries with embeddings
+                created_queries = []
+                for query in sub_queries:
+                    # Generate embedding
+                    try:
+                        query_embedding = await self.embedding_generator.generate_embedding(query["text"])
+                    except Exception as e:
+                        logger.warning(f"Failed to generate embedding for sub-query: {str(e)}")
+                        query_embedding = None
+                    
+                    # Create sub-query
+                    sub_query_id = await self.query_repo.create_sub_query(
+                        workflow_run_id,
+                        original_query_id,
+                        query["text"],
+                        query_embedding
+                    )
+                    created_queries.append({
+                        "id": sub_query_id,
+                        "text": query["text"]
+                    })
+                
+                return created_queries
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse LLM response as JSON: {str(e)}")
+                raise AgentError("Invalid response format from LLM")
             
         except Exception as e:
             raise AgentError(f"Failed to generate LLM sub-queries: {str(e)}") from e
@@ -335,15 +373,37 @@ class QueryAnalyzerAgent(BaseAgent):
         try:
             sub_queries = []
             for text in sub_query_texts:
-                if text.strip() and not text.startswith(("Based on", "Consider", "Note")):
+                text = text.strip()
+                # Keep only the actual questions
+                if (text and
+                    "?" in text and  # Must be a question
+                    not text.startswith(("Dưới đây", "Các câu")) and  # Skip introductory text
+                    "**" in text):  # Questions are usually marked with **
+                    
+                    # Clean up the question text
+                    question = text.replace("**", "").strip()
+                    if question.startswith(("#### ", "### ")):
+                        question = question[5:] if question.startswith("#### ") else question[4:]
+                    if question.startswith(("1. ", "2. ", "3. ", "4. ", "5. ")):
+                        question = question[3:]
+                    
+                    # Generate embedding for sub-query
+                    try:
+                        sub_query_embedding = await self.embedding_generator.generate_embedding(question)
+                    except Exception as e:
+                        logger.warning(f"Failed to generate embedding for sub-query: {str(e)}")
+                        sub_query_embedding = None
+
+                    # Create sub-query with embedding
                     sub_query_id = await self.query_repo.create_sub_query(
                         workflow_run_id,
                         original_query_id,
-                        text.strip()
+                        question,
+                        sub_query_embedding
                     )
                     sub_queries.append({
                         "id": sub_query_id,
-                        "text": text.strip()
+                        "text": question
                     })
             return sub_queries
             

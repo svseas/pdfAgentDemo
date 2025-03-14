@@ -18,7 +18,7 @@ Main query: {query}
 Generate sub-queries that will help build a complete answer.""",
 
         "vi": """Bạn là một chuyên gia trong việc phân tích các câu hỏi phức tạp thành các câu hỏi đơn giản hơn.
-Với câu hỏi được cung cấp, hãy tạo 3-5 câu hỏi phụ sẽ giúp trả lời câu hỏi chính một cách toàn diện.
+Với câu hỏi được cung cấp, hãy tạo CHÍNH XÁC 5 câu hỏi phụ sẽ giúp trả lời câu hỏi chính một cách toàn diện.
 
 Cần xem xét:
 - Các khái niệm và định nghĩa chính
@@ -28,7 +28,26 @@ Cần xem xét:
 
 Câu hỏi chính: {query}
 
-Tạo các câu hỏi phụ sẽ giúp xây dựng câu trả lời hoàn chỉnh."""
+Trả về kết quả theo định dạng JSON như sau:
+{{
+    "sub_queries": [
+        {{
+            "id": 1,
+            "text": "Câu hỏi phụ 1?"
+        }},
+        {{
+            "id": 2,
+            "text": "Câu hỏi phụ 2?"
+        }},
+        ...
+    ]
+}}
+
+Lưu ý:
+- Phải trả về ĐÚNG 5 câu hỏi phụ
+- Mỗi câu hỏi phải kết thúc bằng dấu hỏi (?)
+- Không thêm giải thích hay chú thích
+- Chỉ trả về JSON, không thêm text khác"""
     },
 
     "summarization": {

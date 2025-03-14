@@ -89,7 +89,7 @@ class PDFProcessor(DocumentProcessorInterface):
         except Exception as e:
             raise DocumentProcessingError(f"Failed to extract text from PDF: {str(e)}")
             
-    def process_text(self, text: str) -> List[str]:
+    async def process_text(self, text: str) -> List[str]:
         """
         Process text into chunks.
         
@@ -112,7 +112,7 @@ class PDFProcessor(DocumentProcessorInterface):
                 splitter = self.semantic_splitter
                 
             # Split text into chunks
-            chunks = splitter.split(text)
+            chunks = await splitter.split(text)
             
             # Log chunk information
             logger.info(f"Created {len(chunks)} chunks")
@@ -127,6 +127,6 @@ class PDFProcessor(DocumentProcessorInterface):
             # Fallback to semantic chunking if agentic fails
             if self.chunking_method == "agentic":
                 logger.info("Falling back to semantic chunking")
-                return self.semantic_splitter.split(text)
+                return await self.semantic_splitter.split(text)
             else:
                 raise DocumentProcessingError(f"Failed to process text: {str(e)}")

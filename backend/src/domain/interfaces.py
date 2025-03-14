@@ -8,7 +8,7 @@ class TextSplitterInterface(ABC):
     """Interface for text splitting strategies."""
     
     @abstractmethod
-    def split(self, text: str) -> List[str]:
+    async def split(self, text: str) -> List[str]:
         """Split text into chunks."""
         pass
 
@@ -16,12 +16,12 @@ class EmbeddingGeneratorInterface(ABC):
     """Interface for embedding generation."""
     
     @abstractmethod
-    def generate_embedding(self, text: str) -> np.ndarray:
+    async def generate_embedding(self, text: str) -> np.ndarray:
         """Generate embedding for a single text."""
         pass
         
     @abstractmethod
-    def generate_embeddings(self, texts: List[str]) -> List[np.ndarray]:
+    async def generate_embeddings(self, texts: List[str]) -> List[np.ndarray]:
         """Generate embeddings for multiple texts."""
         pass
 
@@ -51,7 +51,7 @@ class DocumentProcessorInterface(ABC):
         pass
         
     @abstractmethod
-    def process_text(self, text: str) -> List[str]:
+    async def process_text(self, text: str) -> List[str]:
         """Process extracted text into chunks."""
         pass
 

@@ -106,12 +106,12 @@ class DocumentService:
                 raise ValueError("No text content extracted from PDF")
                 
             # Process text into chunks
-            chunks = self._pdf_processor.process_text(text)
+            chunks = await self._pdf_processor.process_text(text)
             if not chunks:
                 raise ValueError("No chunks created from text")
             
             # Generate embeddings
-            embeddings = self._embedding_generator.generate_embeddings(chunks)
+            embeddings = await self._embedding_generator.generate_embeddings(chunks)
             
             # Save chunks with embeddings
             filename = file_path.name

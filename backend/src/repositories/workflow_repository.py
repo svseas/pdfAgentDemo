@@ -2,19 +2,22 @@
 from datetime import datetime
 import logging
 from typing import Dict, Any, Optional, List
+import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
-from backend.src.domain.interfaces import (
+from src.domain.interfaces import (
     WorkflowRepository,
     QueryRepository,
     AgentStepRepository,
     ContextRepository,
     CitationRepository
 )
-from backend.src.models.workflow import (
+from src.models.workflow import (
     WorkflowRun,
     UserQuery,
+    OriginalUserQuery,
     SubQuery,
     AgentStep,
     ContextResult,
@@ -125,7 +128,7 @@ class SQLWorkflowRepository(WorkflowRepository):
                 if final_answer is not None:
                     workflow.final_answer = final_answer
                 if status in ["completed", "failed"]:
-                    workflow.completed_at = datetime.utcnow()
+                    workflow.completed_at = datetime.now()
                 await self.session.commit()
         except Exception as e:
             await self.session.rollback()
@@ -139,18 +142,90 @@ class SQLQueryRepository(QueryRepository):
 
     async def create_user_query(
         self,
-        query_text: str,
-        query_embedding: Optional[List[float]] = None
+        query_text: str
     ) -> int:
-        """Create a new user query."""
+        """Create a new user query and original query if needed."""
         try:
+            # Check if original query exists
+            result = await self.session.execute(
+                select(OriginalUserQuery).where(OriginalUserQuery.query_text == query_text)
+            )
+            original_query = result.scalar_one_or_none()
+
+            # Create original query if it doesn't exist
+            if not original_query:
+                original_query = OriginalUserQuery(
+                    query_text=query_text,
+                    created_at=datetime.now(),
+                    updated_at=datetime.now()
+                )
+                self.session.add(original_query)
+                await self.session.commit()
+                await self.session.refresh(original_query)
+
+            # Create user query with reference to original
             query = UserQuery(
                 query_text=query_text,
-                query_embedding=query_embedding
+                original_query_id=original_query.id,
+                created_at=datetime.now()
             )
             self.session.add(query)
-            await self.session.flush()  # Get ID without committing
+            await self.session.commit()
+            await self.session.refresh(query)
             return query.id
+        except Exception as e:
+            await self.session.rollback()
+            raise
+
+    async def update_query_embedding(
+        self,
+        query_id: int,
+        embedding: np.ndarray
+    ) -> None:
+        """Update embedding for a query and its original query."""
+        try:
+            # Get the query with original query loaded
+            stmt = select(UserQuery).options(
+                joinedload(UserQuery.original_query)
+            ).where(UserQuery.id == query_id)
+            result = await self.session.execute(stmt)
+            query = result.scalar_one_or_none()
+            
+            if not query:
+                return
+
+            # Update query embedding
+            query.query_embedding = embedding
+            
+            # Update original query embedding if not already set
+            if query.original_query and query.original_query.query_embedding is None:
+                query.original_query.query_embedding = embedding
+                query.original_query.updated_at = datetime.now()
+
+            await self.session.commit()
+        except Exception as e:
+            await self.session.rollback()
+            raise
+
+    async def create_sub_query(
+        self,
+        workflow_run_id: int,
+        original_query_id: Optional[int],
+        sub_query_text: str,
+        sub_query_embedding: Optional[np.ndarray] = None
+    ) -> int:
+        """Create a new sub query with optional embedding."""
+        try:
+            sub_query = SubQuery(
+                workflow_run_id=workflow_run_id,
+                original_query_id=original_query_id,
+                sub_query_text=sub_query_text,
+                sub_query_embedding=sub_query_embedding
+            )
+            self.session.add(sub_query)
+            await self.session.commit()
+            await self.session.refresh(sub_query)
+            return sub_query.id
         except Exception as e:
             await self.session.rollback()
             raise

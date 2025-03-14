@@ -139,7 +139,7 @@ class AgenticChunker(TextSplitterInterface):
             flex=0.4
         )
         
-    def _improve_chunks_with_llm(self, chunks: List[str]) -> List[str]:
+    async def _improve_chunks_with_llm(self, chunks: List[str]) -> List[str]:
         """Improve chunks using LLM."""
         improved_chunks = []
         
@@ -195,7 +195,7 @@ class AgenticChunker(TextSplitterInterface):
                 
         return improved_chunks if improved_chunks else chunks
 
-    def split(self, text: str) -> List[str]:
+    async def split(self, text: str) -> List[str]:
         """
         Split text into chunks using LLM-based improvement.
         
@@ -211,12 +211,12 @@ class AgenticChunker(TextSplitterInterface):
         try:
             # Start with semantic chunking
             logger.info("Starting with semantic chunking")
-            chunks = self.fallback_splitter.split(text)
+            chunks = await self.fallback_splitter.split(text)
             
             # Try to improve with LLM
             try:
                 logger.info("Attempting to improve chunks with LLM")
-                improved_chunks = self._improve_chunks_with_llm(chunks)
+                improved_chunks = await self._improve_chunks_with_llm(chunks)
                 
                 if improved_chunks:
                     logger.info(f"Successfully improved chunks with LLM: {len(improved_chunks)} chunks")

@@ -62,7 +62,7 @@ class SemanticTextSplitter(TextSplitterInterface):
         result.append(current)
         return result
         
-    def split(self, text: str) -> List[str]:
+    async def split(self, text: str) -> List[str]:
         """
         Split text into chunks using semantic units.
         

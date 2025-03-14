@@ -246,6 +246,7 @@ async def summarize_document(
 async def analyze_query(
     request: QueryAnalysisRequest,
     query_analyzer: QueryAnalyzerAgent = Depends(get_query_analyzer_agent),
+    embedding_generator: EmbeddingGenerator = Depends(get_embedding_generator),
     db: AsyncSession = Depends(get_db)
 ) -> dict:
     """Analyze query using stepback prompting"""
@@ -254,8 +255,24 @@ async def analyze_query(
         query_repo = SQLQueryRepository(db)
         workflow_repo = SQLWorkflowRepository(db)
         
-        # Create user query
+        # Create user query first
         query_id = await query_repo.create_user_query(request.query)
+        
+        try:
+            # Generate embedding asynchronously
+            logger.info("Generating embedding for query: %s", request.query)
+            query_embedding = await embedding_generator.generate_embedding(request.query)
+            logger.info("Generated embedding shape: %s", query_embedding.shape if query_embedding is not None else None)
+            
+            # Update query with embedding
+            if query_embedding is not None:
+                logger.info("Updating query %d with embedding", query_id)
+                await query_repo.update_query_embedding(query_id, query_embedding)
+                logger.info("Successfully updated query embedding")
+            else:
+                logger.warning("No embedding generated for query")
+        except Exception as e:
+            logger.error(f"Failed to generate embedding for query: {str(e)}", exc_info=True)
         
         # Create workflow run
         workflow_run_id = await workflow_repo.create_workflow_run(
