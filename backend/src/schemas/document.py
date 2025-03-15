@@ -87,3 +87,9 @@ class DocumentSearchResult(BaseModel):
     content: str
     similarity_score: float
     doc_metadata: DocumentMetadataRead
+
+
+class DocumentEmbedRequest(BaseModel):
+    """Schema for document embedding request"""
+    document_id: int = Field(..., gt=0, description="ID of the document to embed")
+    force: bool = Field(default=False, description="Whether to force update existing embeddings")

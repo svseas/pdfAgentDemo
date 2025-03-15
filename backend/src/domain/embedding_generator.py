@@ -27,7 +27,7 @@ class LMStudioEmbeddingGenerator(EmbeddingGeneratorInterface):
     async def _check_service_health(self) -> None:
         """Check if LMStudio service is available."""
         try:
-            requests.get(self.api_url, timeout=5).raise_for_status()
+            requests.get(f"{self.api_url}/v1/models", timeout=5).raise_for_status()
         except RequestException as e:
             logger.error(f"LMStudio is not available: {str(e)}")
             raise EmbeddingError(f"LMStudio is not running at {self.api_url}")
@@ -36,7 +36,7 @@ class LMStudioEmbeddingGenerator(EmbeddingGeneratorInterface):
         """Call LMStudio embeddings API."""
         try:
             response = requests.post(
-                f"{self.api_url}/embeddings",
+                f"{self.api_url}/v1/embeddings",
                 json={
                     "model": self.model,
                     "input": texts
@@ -50,17 +50,25 @@ class LMStudioEmbeddingGenerator(EmbeddingGeneratorInterface):
             if 'error' in result:
                 raise EmbeddingError(f"LMStudio API error: {result['error']}")
                 
-            return [np.array(data['embedding']) for data in result['data']]
+            if not isinstance(result, dict) or 'data' not in result:
+                raise EmbeddingError("Invalid response format from LMStudio")
+                
+            embeddings = []
+            for data in result['data']:
+                if not isinstance(data, dict) or 'embedding' not in data:
+                    raise EmbeddingError("Invalid embedding data from LMStudio")
+                embeddings.append(np.array(data['embedding']))
+                
+            if len(embeddings) != len(texts):
+                raise EmbeddingError(
+                    f"Expected {len(texts)} embeddings but got {len(embeddings)}"
+                )
+                
+            return embeddings
             
         except RequestException as e:
             raise EmbeddingError(f"Failed to generate embeddings: {str(e)}")
             
-    async def _generate_mock_embedding(self, count: int = 1) -> List[np.ndarray]:
-        """Generate mock embeddings for fallback."""
-        logger.warning("Using mock embeddings")
-        mock_embedding = np.random.rand(768)  # Standard embedding size
-        return [mock_embedding for _ in range(count)]
-
     async def generate_embeddings(self, texts: Union[str, List[str]]) -> List[np.ndarray]:
         """
         Generate embeddings for texts.
@@ -79,19 +87,15 @@ class LMStudioEmbeddingGenerator(EmbeddingGeneratorInterface):
         elif not texts:
             return []
             
-        try:
-            await self._check_service_health()
-            embeddings = await self._call_embeddings_api(texts)
+        # Always check if LMStudio is available
+        await self._check_service_health()
+        embeddings = await self._call_embeddings_api(texts)
+        
+        logger.info(f"Generated {len(embeddings)} embeddings")
+        if embeddings:
+            logger.info(f"Embedding dimension: {embeddings[0].shape}")
             
-            logger.info(f"Generated {len(embeddings)} embeddings")
-            if embeddings:
-                logger.info(f"Embedding dimension: {embeddings[0].shape}")
-                
-            return embeddings
-            
-        except EmbeddingError:
-            # Fallback to mock embeddings
-            return await self._generate_mock_embedding(len(texts))
+        return embeddings
 
     async def generate_embedding(self, text: str) -> np.ndarray:
         """

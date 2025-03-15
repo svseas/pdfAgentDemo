@@ -19,7 +19,6 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 @router.post("/summarize")
 @handle_errors
-@track_query(query_param="request", is_system_query=True)
 async def summarize_document(
     request: SummarizeRequest,
     summarization_agent: RecursiveSummarizationAgent = Depends(get_summarization_agent),
@@ -31,7 +30,6 @@ async def summarize_document(
         request: Summarization parameters
         summarization_agent: Agent for document summarization
         db: Database session
-        original_query_id: ID of the original query (added by middleware)
         
     Returns:
         Dict containing summaries at different levels
@@ -42,10 +40,9 @@ async def summarize_document(
     try:
         # Process request
         input_data = {
-            "document_id": int(request.document_id),
+            "document_id": request.document_id,
             "language": request.language,
-            "max_length": request.max_length,
-            "original_query_id": request.original_query_id
+            "max_length": request.max_length
         }
         
         result = await summarization_agent.process(input_data)

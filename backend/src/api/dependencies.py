@@ -103,6 +103,7 @@ async def get_citation_repository(
 async def get_summarization_agent(
     session: AsyncSession = Depends(get_db),
     context_repo: ContextRepository = Depends(get_context_repository),
+    document_repo: DocumentRepository = Depends(get_document_repository),
     pdf_processor: PDFProcessor = Depends(get_pdf_processor),
     embedding_generator: EmbeddingGenerator = Depends(get_embedding_generator),
     llm_service: LLMService = Depends(get_llm_service),
@@ -112,6 +113,7 @@ async def get_summarization_agent(
     return RecursiveSummarizationAgent(
         session=session,
         context_repo=context_repo,
+        document_repo=document_repo,
         pdf_processor=pdf_processor,
         embedding_generator=embedding_generator,
         llm=llm_service,

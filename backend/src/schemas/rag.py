@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
 
@@ -13,13 +13,13 @@ class SearchRequest(BaseModel):
     top_k: int = 5
     similarity_threshold: float = 0.5
     use_grag: bool = False
-    original_query_id: Optional[int] = None
+    original_query_id: int | None = None
 
 class ContextRequest(BaseModel):
     query: str
     relevant_chunks: List[Dict[str, Any]]
     temperature: float = 0.7
-    original_query_id: Optional[int] = None
+    original_query_id: int | None = None
 
 class QueryRequest(BaseModel):
     """Request for RAG query processing"""
@@ -27,27 +27,25 @@ class QueryRequest(BaseModel):
     top_k: int = 5
     similarity_threshold: float = 0.5
     temperature: float = 0.7
-    original_query_id: Optional[int] = None
+    original_query_id: int | None = None
 
 class SummarizeRequest(BaseModel):
     """Request for document summarization"""
-    document_id: str
-    max_length: Optional[int] = None
+    document_id: int
+    max_length: int | None = None
     language: str = "vietnamese"
-    original_query_id: Optional[int] = None
 
 class QueryAnalysisRequest(BaseModel):
     """Request for query analysis with stepback prompting"""
     query: str
     language: str = "vietnamese"
-    original_query_id: Optional[int] = None
 
 class CitationRequest(BaseModel):
     """Request for citation extraction"""
     document_id: str
     query: str
     language: str = "vietnamese"
-    original_query_id: Optional[int] = None
+    original_query_id: int | None = None
 
 class ContextBuilderRequest(BaseModel):
     """Request parameters for context building"""
@@ -101,4 +99,4 @@ class SynthesisRequest(BaseModel):
     citations: List[Dict[str, Any]]
     language: str = "vietnamese"
     temperature: float = 0.7
-    original_query_id: Optional[int] = None
+    original_query_id: int | None = None

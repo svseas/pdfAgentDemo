@@ -1,12 +1,6 @@
 """Enums for repository layer."""
 from enum import Enum, auto
 
-class WorkflowStatus(str, Enum):
-    """Workflow run status."""
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
 class QueryType(str, Enum):
     """Types of queries."""
     USER = "user"
@@ -21,8 +15,9 @@ class SummaryLevel(int, Enum):
 
 class SummaryType(str, Enum):
     """Types of summaries."""
-    SECTION = "section"
-    DOCUMENT = "document"
+    CHUNK = "chunk"
+    INTERMEDIATE = "intermediate"
+    FINAL = "final"
 
 class CitationType(str, Enum):
     """Types of citations."""

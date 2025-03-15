@@ -157,3 +157,26 @@ class ContextRepository(BaseRepository[ContextSet]):
             return summary.id
         except Exception as e:
             raise RepositoryError(f"Failed to create document summary: {str(e)}")
+            
+    async def update_summary_embedding(
+        self,
+        summary_id: int,
+        embedding: List[float]
+    ) -> None:
+        """Update embedding for a document summary.
+        
+        Args:
+            summary_id: ID of summary to update
+            embedding: New embedding vector
+            
+        Raises:
+            RepositoryError: If update fails
+        """
+        try:
+            summary = await self.session.get(DocumentSummary, summary_id)
+            if summary:
+                summary.embedding = embedding.tolist() if embedding is not None else None
+                await self.session.commit()
+        except Exception as e:
+            await self.session.rollback()
+            raise RepositoryError(f"Failed to update summary embedding: {str(e)}")

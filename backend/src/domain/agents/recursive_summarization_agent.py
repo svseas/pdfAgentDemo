@@ -4,6 +4,8 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.repositories.context_repository import ContextRepository
+from src.repositories.document_repository import DocumentRepository
+from src.repositories.enums import SummaryType
 from src.domain.pdf_processor import PDFProcessor
 from src.domain.embedding_generator import EmbeddingGenerator
 from src.domain.exceptions import AgentError
@@ -31,11 +33,11 @@ class RecursiveSummarizationAgent(BaseAgent):
         embedding_generator: Generator for text embeddings
         context_repo: Repository for context operations
     """
-    
     def __init__(
         self,
         session: AsyncSession,
         context_repo: ContextRepository,
+        document_repo: DocumentRepository,
         pdf_processor: PDFProcessor,
         embedding_generator: EmbeddingGenerator,
         *args,
@@ -46,6 +48,7 @@ class RecursiveSummarizationAgent(BaseAgent):
         Args:
             session: Database session
             context_repo: Repository for context operations
+            document_repo: Repository for document operations
             pdf_processor: Processor for PDF documents
             embedding_generator: Generator for text embeddings
             *args, **kwargs: Additional arguments for BaseAgent
@@ -53,6 +56,8 @@ class RecursiveSummarizationAgent(BaseAgent):
         super().__init__(session, *args, **kwargs)
         self.pdf_processor = pdf_processor
         self.embedding_generator = embedding_generator
+        self.context_repo = context_repo
+        self.document_repo = document_repo
         self.context_repo = context_repo
 
     async def _process_impl(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -154,38 +159,76 @@ class RecursiveSummarizationAgent(BaseAgent):
             AgentError: If summary checking fails
         """
         try:
-            existing = await self.context_repo.get_document_summaries(document_id)
-            if not existing["final_summary"]:
+            summaries = await self.context_repo.get_document_summaries(document_id)
+            if not summaries:
                 return None
-                
+
+            # Organize summaries by level
+            chunk_summaries = []
+            intermediate_summaries = []
+            final_summary = None
+
+            for summary in summaries:
+                if summary.summary_type == SummaryType.CHUNK:
+                    chunk_summaries.append({
+                        "id": summary.id,
+                        "text": summary.summary_text,
+                        "embedding": summary.embedding.tolist() if summary.embedding is not None else None,
+                        "chunk_range": summary.summary_metadata.get("chunk_range", "")
+                    })
+                elif summary.summary_type == SummaryType.INTERMEDIATE:
+                    intermediate_summaries.append({
+                        "id": summary.id,
+                        "text": summary.summary_text,
+                        "embedding": summary.embedding.tolist() if summary.embedding is not None else None,
+                        "batch_range": summary.summary_metadata.get("batch_range", "")
+                    })
+                elif summary.summary_type == SummaryType.FINAL:
+                    final_summary = {
+                        "id": summary.id,
+                        "text": summary.summary_text,
+                        "embedding": summary.embedding.tolist() if summary.embedding is not None else None
+                    }
+
+            if not final_summary:
+                return None
+
             # Check if embeddings need updating
             need_embeddings = False
             
-            if not existing["final_summary"].get("embedding"):
+            if final_summary.get("embedding") is None:
                 need_embeddings = True
                 logger.info("Final summary missing embedding")
                 
-            for summary in existing["chunk_summaries"]:
-                if not summary.get("embedding"):
+            for summary in chunk_summaries:
+                if summary.get("embedding") is None:
                     need_embeddings = True
                     logger.info("Some chunk summaries missing embeddings")
                     break
                     
-            for summary in existing["intermediate_summaries"]:
-                if not summary.get("embedding"):
+            for summary in intermediate_summaries:
+                if summary.get("embedding") is None:
                     need_embeddings = True
                     logger.info("Some intermediate summaries missing embeddings")
                     break
                     
             if need_embeddings:
-                await self._update_missing_embeddings(existing)
+                organized_summaries = {
+                    "chunk_summaries": chunk_summaries,
+                    "intermediate_summaries": intermediate_summaries,
+                    "final_summary": final_summary
+                }
+                await self._update_missing_embeddings(organized_summaries)
                 
             return {
                 "document_id": document_id,
-                "chunk_summaries": existing["chunk_summaries"],
-                "intermediate_summaries": existing["intermediate_summaries"],
-                "final_summary": existing["final_summary"]["text"],
-                "metadata": existing["metadata"]
+                "chunk_summaries": chunk_summaries,
+                "intermediate_summaries": intermediate_summaries,
+                "final_summary": final_summary["text"],
+                "metadata": {
+                    "total_chunks": len(chunk_summaries),
+                    "total_intermediates": len(intermediate_summaries)
+                }
             }
             
         except Exception as e:
@@ -198,7 +241,7 @@ class RecursiveSummarizationAgent(BaseAgent):
         """Update missing embeddings for existing summaries.
         
         Args:
-            summaries: Dict containing existing summaries
+            summaries: Dict containing organized summaries (chunk, intermediate, final)
             
         Raises:
             AgentError: If embedding update fails
@@ -227,12 +270,13 @@ class RecursiveSummarizationAgent(BaseAgent):
                     )
             
             # Update final summary embedding
-            if not summaries["final_summary"].get("embedding"):
+            final_summary = summaries["final_summary"]
+            if not final_summary.get("embedding"):
                 embedding = await self.embedding_generator.generate_embedding(
-                    summaries["final_summary"]["text"]
+                    final_summary["text"]
                 )
                 await self.context_repo.update_summary_embedding(
-                    summaries["final_summary"]["id"],
+                    final_summary["id"],
                     embedding
                 )
                 
@@ -255,10 +299,15 @@ class RecursiveSummarizationAgent(BaseAgent):
             AgentError: If chunk retrieval fails
         """
         try:
-            chunks = await self.context_repo.get_document_chunks(document_id)
+            chunks = await self.document_repo.get_chunks_by_doc_id(document_id)
             return [
-                chunk for chunk in chunks
-                if chunk.get("chunk_text", "").strip()
+                {
+                    "chunk_text": chunk.content,
+                    "chunk_index": chunk.chunk_index,
+                    "embedding": chunk.embedding
+                }
+                for chunk in chunks
+                if chunk.content.strip()
             ]
         except Exception as e:
             raise AgentError(f"Failed to get document chunks: {str(e)}") from e
@@ -311,22 +360,23 @@ class RecursiveSummarizationAgent(BaseAgent):
                 )
                 
                 # Store summary
-                summary_id = await self.context_repo.create_summary(
+                summary_id = await self.context_repo.create_document_summary(
                     document_id=document_id,
-                    summary_level=1,
                     summary_text=summary_text,
-                    summary_embedding=embedding,
+                    summary_type=SummaryType.CHUNK,
                     summary_metadata={
                         "chunk_start": i,
                         "chunk_end": i + len(batch) - 1,
                         "total_chunks": len(chunks)
-                    }
+                    },
+                    embedding=embedding
                 )
                 
                 summaries.append({
                     "id": summary_id,
                     "text": summary_text,
-                    "chunk_range": f"{i}-{i + len(batch) - 1}"
+                    "chunk_range": f"{i}-{i + len(batch) - 1}",
+                    "embedding": embedding.tolist() if embedding is not None else None
                 })
                 
                 logger.info(f"Created summary for chunks {i}-{i + len(batch) - 1}")
@@ -382,30 +432,33 @@ class RecursiveSummarizationAgent(BaseAgent):
                 )
                 
                 # Store summary
-                summary_id = await self.context_repo.create_summary(
+                summary_id = await self.context_repo.create_document_summary(
                     document_id=document_id,
-                    summary_level=2,
                     summary_text=summary_text,
-                    summary_embedding=embedding,
+                    summary_type=SummaryType.INTERMEDIATE,
                     summary_metadata={
                         "batch_start": i,
                         "batch_end": i + len(current_batch) - 1,
                         "total_batches": len(chunk_summaries)
-                    }
+                    },
+                    embedding=embedding
                 )
                 
-                # Create hierarchy relationships
+                # Set parent-child relationships by updating chunk summaries
                 for chunk_summary in current_batch:
-                    await self.context_repo.create_summary_hierarchy(
+                    await self.context_repo.create_document_summary(
+                        document_id=document_id,
+                        summary_text=chunk_summary["text"],
+                        summary_type=SummaryType.CHUNK,
                         parent_summary_id=summary_id,
-                        child_summary_id=chunk_summary["id"],
-                        relationship_type="contains"
+                        summary_metadata={"chunk_range": chunk_summary["chunk_range"]},
+                        embedding=chunk_summary.get("embedding")
                     )
-                
                 summaries.append({
                     "id": summary_id,
                     "text": summary_text,
-                    "batch_range": f"{i}-{i + len(current_batch) - 1}"
+                    "batch_range": f"{i}-{i + len(current_batch) - 1}",
+                    "embedding": embedding.tolist() if embedding is not None else None
                 })
                 
                 logger.info(
@@ -462,27 +515,31 @@ class RecursiveSummarizationAgent(BaseAgent):
             )
             
             # Store final summary
-            summary_id = await self.context_repo.create_summary(
+            summary_id = await self.context_repo.create_document_summary(
                 document_id=document_id,
-                summary_level=3,
                 summary_text=summary_text,
-                summary_embedding=embedding,
+                summary_type=SummaryType.FINAL,
                 summary_metadata={
                     "total_intermediates": len(intermediate_summaries)
-                }
+                },
+                embedding=embedding
             )
             
-            # Create hierarchy relationships
+            # Set parent-child relationships by updating intermediate summaries
             for intermediate_summary in intermediate_summaries:
-                await self.context_repo.create_summary_hierarchy(
+                await self.context_repo.create_document_summary(
+                    document_id=document_id,
+                    summary_text=intermediate_summary["text"],
+                    summary_type=SummaryType.INTERMEDIATE,
                     parent_summary_id=summary_id,
-                    child_summary_id=intermediate_summary["id"],
-                    relationship_type="contains"
+                    summary_metadata={"batch_range": intermediate_summary["batch_range"]},
+                    embedding=intermediate_summary.get("embedding")
                 )
             
             return {
                 "id": summary_id,
-                "text": summary_text
+                "text": summary_text,
+                "embedding": embedding.tolist() if embedding is not None else None
             }
             
         except Exception as e:
